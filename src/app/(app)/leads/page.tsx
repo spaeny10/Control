@@ -3,36 +3,46 @@ import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { LeadsKanban, type KanbanLead } from "@/components/leads/leads-kanban";
 import { fullName } from "@/lib/format";
 import { SearchInput } from "@/components/layout/search-input";
+import { FilterPills } from "@/components/layout/filter-pills";
 
 export const metadata = { title: "Leads" };
 
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; owner?: string }>;
 }) {
-  const { q } = await searchParams;
+  const { q, owner } = await searchParams;
   const search = q?.trim();
 
-  const [leads, companies, contacts] = await Promise.all([
+  const [leads, companies, contacts, owners] = await Promise.all([
     prisma.lead.findMany({
-      where: search
-        ? {
-            OR: [
-              { title: { contains: search, mode: "insensitive" } },
-              { source: { contains: search, mode: "insensitive" } },
-              { company: { name: { contains: search, mode: "insensitive" } } },
-              {
-                contact: {
-                  OR: [
-                    { firstName: { contains: search, mode: "insensitive" } },
-                    { lastName: { contains: search, mode: "insensitive" } },
-                  ],
+      where: {
+        ...(owner ? { ownerId: owner } : {}),
+        ...(search
+          ? {
+              OR: [
+                { title: { contains: search, mode: "insensitive" } },
+                { source: { contains: search, mode: "insensitive" } },
+                {
+                  company: {
+                    name: { contains: search, mode: "insensitive" },
+                  },
                 },
-              },
-            ],
-          }
-        : undefined,
+                {
+                  contact: {
+                    OR: [
+                      {
+                        firstName: { contains: search, mode: "insensitive" },
+                      },
+                      { lastName: { contains: search, mode: "insensitive" } },
+                    ],
+                  },
+                },
+              ],
+            }
+          : {}),
+      },
       orderBy: { createdAt: "desc" },
       include: {
         company: { select: { name: true } },
@@ -52,6 +62,11 @@ export default async function LeadsPage({
         lastName: true,
         companyId: true,
       },
+    }),
+    prisma.user.findMany({
+      where: { isActive: true, ownedLeads: { some: {} } },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
     }),
   ]);
 
@@ -78,6 +93,15 @@ export default async function LeadsPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <SearchInput placeholder="Search leads..." />
+          {owners.length > 1 && (
+            <FilterPills
+              basePath="/leads"
+              param="owner"
+              current={owner}
+              keepParams={{ q: search }}
+              options={owners.map((u) => ({ value: u.id, label: u.name }))}
+            />
+          )}
           <LeadFormDialog
             companies={companies}
             contacts={contacts.map((c) => ({

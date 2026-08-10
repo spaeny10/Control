@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
   Table,
@@ -21,7 +22,19 @@ import { startOfMonth, subMonths, endOfMonth, format } from "date-fns";
 export const metadata = { title: "Sales" };
 
 export default async function SalesPage() {
-  const [users, activeSubs, endedSubs, unattributed] = await Promise.all([
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
+
+  const [
+    users,
+    activeSubs,
+    endedSubs,
+    unattributed,
+    openActivities,
+    overdueActivities,
+    completedThisWeek,
+    openLeads,
+  ] = await Promise.all([
     prisma.user.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
@@ -44,9 +57,33 @@ export default async function SalesPage() {
         salespersonId: null,
       },
     }),
+    prisma.activity.groupBy({
+      by: ["assigneeId"],
+      where: { done: false },
+      _count: true,
+    }),
+    prisma.activity.groupBy({
+      by: ["assigneeId"],
+      where: { done: false, dueDate: { lt: now } },
+      _count: true,
+    }),
+    prisma.activity.groupBy({
+      by: ["assigneeId"],
+      where: { done: true, completedAt: { gte: weekAgo } },
+      _count: true,
+    }),
+    prisma.lead.groupBy({
+      by: ["ownerId"],
+      where: { stage: { notIn: ["WON", "LOST"] } },
+      _count: true,
+      _sum: { estValue: true },
+    }),
   ]);
 
-  const now = new Date();
+  const countBy = (
+    rows: { assigneeId: string | null; _count: number }[],
+    id: string
+  ) => rows.find((r) => r.assigneeId === id)?._count ?? 0;
   const thisMonthStart = startOfMonth(now);
   const lastMonthStart = startOfMonth(subMonths(now, 1));
   const lastMonthEnd = endOfMonth(subMonths(now, 1));
@@ -69,6 +106,7 @@ export default async function SalesPage() {
           s.startDate <= lastMonthEnd
       )
       .reduce((sum, s) => sum + Number(s.mrr), 0);
+    const leadRow = openLeads.find((l) => l.ownerId === u.id);
     return {
       id: u.id,
       name: u.name,
@@ -79,11 +117,22 @@ export default async function SalesPage() {
       commission: (activeMrr * rate) / 100,
       newThisMonth,
       newLastMonth,
+      openActivities: countBy(openActivities, u.id),
+      overdueActivities: countBy(overdueActivities, u.id),
+      completedThisWeek: countBy(completedThisWeek, u.id),
+      openLeadCount: leadRow?._count ?? 0,
+      openPipeline: leadRow?._sum.estValue ? Number(leadRow._sum.estValue) : 0,
     };
   });
 
   const activeReps = reps.filter(
-    (r) => r.activeMrr > 0 || r.rate > 0 || r.team
+    (r) =>
+      r.activeMrr > 0 ||
+      r.rate > 0 ||
+      r.team ||
+      r.openActivities > 0 ||
+      r.openLeadCount > 0 ||
+      r.completedThisWeek > 0
   );
 
   // Team rollups (reps without a team grouped under "No team").
@@ -150,6 +199,74 @@ export default async function SalesPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Team activity</CardTitle>
+          <CardDescription>
+            Effort feeding the pipeline: planned work, overdue items, and what
+            got done in the last 7 days. Click a rep for their full breakdown.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Rep</TableHead>
+                <TableHead className="text-right">Open activities</TableHead>
+                <TableHead className="text-right">Overdue</TableHead>
+                <TableHead className="text-right">Done (7d)</TableHead>
+                <TableHead className="text-right">Open leads</TableHead>
+                <TableHead className="text-right">Open pipeline</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {activeReps.map((rep) => (
+                <TableRow key={rep.id}>
+                  <TableCell>
+                    <Link
+                      href={`/sales/${rep.id}`}
+                      className="font-medium hover:underline"
+                    >
+                      {rep.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {rep.openActivities}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {rep.overdueActivities > 0 ? (
+                      <Badge variant="destructive">
+                        {rep.overdueActivities}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">0</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {rep.completedThisWeek}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {rep.openLeadCount}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatCurrency(rep.openPipeline)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Link
+                      href={`/sales/${rep.id}`}
+                      className="text-sm text-primary hover:underline"
+                    >
+                      View →
+                    </Link>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Reps</CardTitle>
           <CardDescription>
             Commission = attributed active MRR × rate. Rates and teams are set
@@ -188,7 +305,14 @@ export default async function SalesPage() {
               )}
               {activeReps.map((rep) => (
                 <TableRow key={rep.id}>
-                  <TableCell className="font-medium">{rep.name}</TableCell>
+                  <TableCell>
+                    <Link
+                      href={`/sales/${rep.id}`}
+                      className="font-medium hover:underline"
+                    >
+                      {rep.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     {rep.team ? (
                       <Badge variant="secondary">{rep.team.name}</Badge>
