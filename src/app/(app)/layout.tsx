@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { getUserAreas } from "@/lib/authz";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { BigviewLogo } from "@/components/brand/logo";
 import { logout } from "@/lib/actions/auth-actions";
@@ -22,6 +23,7 @@ export default async function AppLayout({
 }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
+  const { areas } = await getUserAreas();
 
   return (
     <div className="flex min-h-screen">
@@ -43,7 +45,7 @@ export default async function AppLayout({
         </div>
 
         <div className="flex-1 overflow-y-auto py-4">
-          <SidebarNav />
+          <SidebarNav areas={areas} />
         </div>
 
         <div className="border-t border-sidebar-border p-3">

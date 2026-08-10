@@ -14,6 +14,15 @@ enum Role {
   MEMBER
 }
 
+// The four functional areas of the app. MEMBERs see only their assigned
+// areas; ADMINs implicitly have all of them.
+enum AppArea {
+  SALES
+  FLEET
+  ACCOUNTING
+  TECH_ADMIN
+}
+
 enum LeadType {
   NEW_COMPANY
   NEW_PROJECT
@@ -112,6 +121,7 @@ model User {
   passwordHash String
   role         Role     @default(MEMBER)
   isActive     Boolean  @default(true)
+  areas        AppArea[] @default([SALES, FLEET, ACCOUNTING, TECH_ADMIN])
   // Commission as a percent of attributed active MRR per month (e.g. 5 = 5%).
   commissionRate Decimal @default(0) @db.Decimal(5, 2)
   salesTeamId  String?

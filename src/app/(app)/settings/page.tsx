@@ -122,6 +122,7 @@ export default async function SettingsPage({
                             email: u.email,
                             role: u.role,
                             isActive: u.isActive,
+                            areas: u.areas,
                           }}
                         />
                       </div>

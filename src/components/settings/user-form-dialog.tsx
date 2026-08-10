@@ -28,7 +28,15 @@ type UserValues = {
   email?: string;
   role?: "ADMIN" | "MEMBER";
   isActive?: boolean;
+  areas?: string[];
 };
+
+const AREA_OPTIONS = [
+  { value: "SALES", label: "Sales" },
+  { value: "FLEET", label: "Fleet" },
+  { value: "ACCOUNTING", label: "Accounting" },
+  { value: "TECH_ADMIN", label: "Technical Admin" },
+];
 
 export function UserFormDialog({ user }: { user?: UserValues }) {
   const [open, setOpen] = useState(false);
@@ -94,6 +102,33 @@ export function UserFormDialog({ user }: { user?: UserValues }) {
               required
               defaultValue={user?.email ?? ""}
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Areas</Label>
+            <div className="grid grid-cols-2 gap-2">
+              {AREA_OPTIONS.map((area) => (
+                <label
+                  key={area.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    name="areas"
+                    value={area.value}
+                    defaultChecked={
+                      user?.areas?.includes(area.value) ??
+                      area.value !== "TECH_ADMIN"
+                    }
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  {area.label}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Members only see their assigned areas. Admins always see
+              everything.
+            </p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">

@@ -47,6 +47,17 @@ const userSchema = z.object({
   password: z.string().optional(),
 });
 
+const AREA_VALUES = ["SALES", "FLEET", "ACCOUNTING", "TECH_ADMIN"] as const;
+
+function parseAreas(formData: FormData) {
+  return formData
+    .getAll("areas")
+    .map(String)
+    .filter((a): a is (typeof AREA_VALUES)[number] =>
+      (AREA_VALUES as readonly string[]).includes(a)
+    );
+}
+
 export async function createUser(formData: FormData): Promise<ActionResult> {
   const session = await auth();
   if (session?.user?.role !== "ADMIN")
@@ -69,6 +80,7 @@ export async function createUser(formData: FormData): Promise<ActionResult> {
       name: d.name,
       email,
       role: d.role,
+      areas: parseAreas(formData),
       passwordHash: await bcrypt.hash(d.password, 10),
     },
   });
@@ -105,6 +117,7 @@ export async function updateUser(
       name: d.name,
       email: d.email.toLowerCase().trim(),
       role: d.role,
+      areas: parseAreas(formData),
       ...(d.password && d.password.length >= 10
         ? { passwordHash: await bcrypt.hash(d.password, 10) }
         : {}),
