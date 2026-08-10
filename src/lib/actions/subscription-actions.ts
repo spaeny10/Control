@@ -331,15 +331,20 @@ export async function endSubscription(
   return { ok: true };
 }
 
-// Deploy additional trailers onto a running subscription.
+// Deploy additional trailers onto a running subscription, optionally
+// increasing the recurring billing by a per-unit rate.
 export async function deployTrailers(
   subscriptionId: string,
-  trailerIds: string[]
+  trailerIds: string[],
+  billing?: { unitRate: number } | null
 ): Promise<ActionResult> {
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
   if (trailerIds.length === 0)
     return { ok: false, error: "Select at least one trailer" };
+  if (billing && !(billing.unitRate >= 0)) {
+    return { ok: false, error: "Invalid per-unit rate" };
+  }
 
   const subscription = await prisma.subscription.findUnique({
     where: { id: subscriptionId },
@@ -359,7 +364,44 @@ export async function deployTrailers(
     };
   }
 
-  await prisma.$transaction([
+  const increase = billing ? billing.unitRate * trailerIds.length : 0;
+  let billingNote = "";
+
+  // Push the increase to Stripe first (prorated from today).
+  if (increase > 0 && subscription.stripeSubscriptionId) {
+    const stripe = getStripe();
+    if (stripe && subscription.billingCycle !== "ONE_TIME") {
+      try {
+        const product = await stripe.products.create({
+          name: `Additional trailer rental (x${trailerIds.length})`,
+        });
+        await stripe.subscriptionItems.create({
+          subscription: subscription.stripeSubscriptionId,
+          quantity: trailerIds.length,
+          price_data: {
+            currency: "usd",
+            unit_amount: toCents(billing!.unitRate),
+            recurring:
+              STRIPE_INTERVALS[
+                subscription.billingCycle as Exclude<
+                  typeof subscription.billingCycle,
+                  "ONE_TIME"
+                >
+              ],
+            product: product.id,
+          },
+          proration_behavior: "create_prorations",
+        });
+        billingNote = " Stripe subscription item added with proration.";
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unknown Stripe error";
+        return { ok: false, error: `Stripe error: ${msg}` };
+      }
+    }
+  }
+
+  const newCycleAmount = Number(subscription.cycleAmount) + increase;
+  const ops: Prisma.PrismaPromise<unknown>[] = [
     ...trailerIds.map((trailerId) =>
       prisma.trailerDeployment.create({
         data: { trailerId, subscriptionId },
@@ -369,12 +411,85 @@ export async function deployTrailers(
       where: { id: { in: trailerIds } },
       data: { status: "DEPLOYED" },
     }),
+  ];
+  if (increase > 0) {
+    ops.push(
+      prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: {
+          cycleAmount: newCycleAmount,
+          mrr:
+            Math.round(
+              toMonthly(newCycleAmount, subscription.billingCycle) * 100
+            ) / 100,
+        },
+      })
+    );
+  }
+  ops.push(
     prisma.message.create({
       data: {
         channel: "SYSTEM",
         body: `Deployed additional units: ${trailers
           .map((t) => t.unitNumber)
-          .join(", ")}`,
+          .join(", ")}.${
+          increase > 0
+            ? ` Billing increased by ${trailerIds.length} x $${billing!.unitRate.toFixed(2)} to $${newCycleAmount.toFixed(2)} per cycle.${billingNote}`
+            : " Billing unchanged."
+        }`,
+        authorId: session.user.id,
+        subscriptionId,
+      },
+    })
+  );
+  await prisma.$transaction(ops);
+
+  revalidatePath(`/subscriptions/${subscriptionId}`);
+  revalidatePath("/fleet");
+  return { ok: true };
+}
+
+// Manual billing correction (e.g. after returning units mid-term). Updates
+// app records; when a Stripe subscription exists its items must currently be
+// adjusted in the Stripe dashboard to match.
+export async function adjustSubscriptionBilling(
+  subscriptionId: string,
+  newCycleAmount: number,
+  note?: string
+): Promise<ActionResult> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: "Not authenticated" };
+  if (!(newCycleAmount >= 0)) return { ok: false, error: "Invalid amount" };
+
+  const subscription = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+  });
+  if (!subscription || subscription.status === "ENDED") {
+    return { ok: false, error: "Subscription is not active" };
+  }
+
+  const old = Number(subscription.cycleAmount);
+  await prisma.$transaction([
+    prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: {
+        cycleAmount: newCycleAmount,
+        mrr:
+          Math.round(
+            toMonthly(newCycleAmount, subscription.billingCycle) * 100
+          ) / 100,
+      },
+    }),
+    prisma.message.create({
+      data: {
+        channel: "SYSTEM",
+        body: `Billing adjusted from $${old.toFixed(2)} to $${newCycleAmount.toFixed(2)} per cycle${
+          note ? ` — ${note}` : ""
+        }.${
+          subscription.stripeSubscriptionId
+            ? " Reminder: update the Stripe subscription to match."
+            : ""
+        }`,
         authorId: session.user.id,
         subscriptionId,
       },
@@ -382,6 +497,6 @@ export async function deployTrailers(
   ]);
 
   revalidatePath(`/subscriptions/${subscriptionId}`);
-  revalidatePath("/fleet");
+  revalidatePath("/subscriptions");
   return { ok: true };
 }

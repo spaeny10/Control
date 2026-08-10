@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Chatter } from "@/components/chatter/chatter";
 import { EndSubscriptionDialog } from "@/components/subscriptions/end-subscription-dialog";
+import { AdjustBillingDialog } from "@/components/subscriptions/adjust-billing-dialog";
 import { DeployTrailersDialog } from "@/components/subscriptions/deploy-trailers-dialog";
 import { ReturnTrailerButton } from "@/components/fleet/return-trailer-button";
 import { DeploymentDocsDialog } from "@/components/fleet/deployment-docs-dialog";
@@ -33,7 +34,9 @@ export default async function SubscriptionDetailPage({
       include: {
         company: { select: { id: true, name: true } },
         project: { select: { id: true, name: true, status: true } },
-        quote: { select: { id: true, number: true } },
+        quote: {
+          select: { id: true, number: true, lineItems: true },
+        },
         deployments: {
           orderBy: { deployedAt: "desc" },
           include: {
@@ -72,6 +75,27 @@ export default async function SubscriptionDetailPage({
     (d) => !d.returnedAt
   );
   const isLive = subscription.status !== "ENDED";
+
+  // Default per-unit rate for added trailers: the quote's recurring rate,
+  // falling back to cycle amount split across units currently on site.
+  const quoteRecurring = subscription.quote?.lineItems.filter(
+    (i) => i.cycle !== "ONE_TIME"
+  );
+  const quoteUnits =
+    quoteRecurring?.reduce((sum, i) => sum + i.quantity, 0) ?? 0;
+  const quoteRecurringTotal =
+    quoteRecurring?.reduce(
+      (sum, i) => sum + i.quantity * Number(i.unitPrice),
+      0
+    ) ?? 0;
+  const defaultUnitRate =
+    quoteUnits > 0
+      ? Math.round((quoteRecurringTotal / quoteUnits) * 100) / 100
+      : activeDeployments.length > 0
+        ? Math.round(
+            (Number(subscription.cycleAmount) / activeDeployments.length) * 100
+          ) / 100
+        : 0;
 
   return (
     <div className="space-y-6">
@@ -123,7 +147,17 @@ export default async function SubscriptionDetailPage({
             </p>
           )}
         </div>
-        {isLive && <EndSubscriptionDialog subscriptionId={subscription.id} />}
+        {isLive && (
+          <div className="flex items-center gap-2">
+            <AdjustBillingDialog
+              subscriptionId={subscription.id}
+              currentCycleAmount={Number(subscription.cycleAmount)}
+              cycleSuffix={CYCLE_SUFFIX[subscription.billingCycle]}
+              hasStripe={!!subscription.stripeSubscriptionId}
+            />
+            <EndSubscriptionDialog subscriptionId={subscription.id} />
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -137,6 +171,8 @@ export default async function SubscriptionDetailPage({
                 <DeployTrailersDialog
                   subscriptionId={subscription.id}
                   availableTrailers={availableTrailers}
+                  defaultUnitRate={defaultUnitRate}
+                  cycleSuffix={CYCLE_SUFFIX[subscription.billingCycle]}
                 />
               )}
             </CardHeader>
