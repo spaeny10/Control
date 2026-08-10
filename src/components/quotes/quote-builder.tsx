@@ -46,7 +46,7 @@ export type BuilderLineItem = {
 };
 
 type Option = { id: string; name: string };
-type ContactOption = Option & { companyId: string };
+type ContactOption = Option & { companyId: string; isBillingContact?: boolean };
 type ProjectOption = Option & { companyId: string };
 type LeadOption = Option & { companyId: string | null; projectId: string | null };
 
@@ -56,6 +56,7 @@ export function QuoteBuilder({
   projects,
   leads,
   catalog,
+  priceOverrides = {},
   initial,
   quoteId,
 }: {
@@ -64,6 +65,8 @@ export function QuoteBuilder({
   projects: ProjectOption[];
   leads: LeadOption[];
   catalog: CatalogProduct[];
+  // { companyId: { planProductId: negotiatedPrice } }
+  priceOverrides?: Record<string, Record<string, number>>;
   initial?: {
     companyId: string;
     contactId: string | null;
@@ -107,6 +110,11 @@ export function QuoteBuilder({
     .filter((i) => i.kind === "ONE_TIME")
     .reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
 
+  // Negotiated per-company price wins over the catalog default.
+  function effectivePrice(product: CatalogProduct) {
+    return priceOverrides[companyId]?.[product.id] ?? product.unitPrice;
+  }
+
   function addFromCatalog(productId: string) {
     const product = catalog.find((p) => p.id === productId);
     if (!product) return;
@@ -117,10 +125,21 @@ export function QuoteBuilder({
         kind: product.kind,
         description: product.name,
         quantity: 1,
-        unitPrice: product.unitPrice,
+        unitPrice: effectivePrice(product),
         planProductId: product.id,
       },
     ]);
+  }
+
+  function selectCompany(id: string) {
+    setCompanyId(id);
+    // Default to the branch's AP/billing contact if none picked yet.
+    if (!contactId) {
+      const billing = contacts.find(
+        (c) => c.companyId === id && c.isBillingContact
+      );
+      if (billing) setContactId(billing.id);
+    }
   }
 
   function addBlank() {
@@ -189,7 +208,7 @@ export function QuoteBuilder({
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Company *</Label>
-            <Select value={companyId} onValueChange={setCompanyId}>
+            <Select value={companyId} onValueChange={selectCompany}>
               <SelectTrigger>
                 <SelectValue placeholder="Select company" />
               </SelectTrigger>
@@ -280,12 +299,16 @@ export function QuoteBuilder({
                 <SelectValue placeholder="Add from catalog..." />
               </SelectTrigger>
               <SelectContent>
-                {catalog.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} — {formatCurrency(p.unitPrice)}
-                    {p.kind === "RECURRING_MONTHLY" ? "/mo" : ""}
-                  </SelectItem>
-                ))}
+                {catalog.map((p) => {
+                  const price = effectivePrice(p);
+                  return (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} — {formatCurrency(price)}
+                      {p.kind === "RECURRING_MONTHLY" ? "/mo" : ""}
+                      {price !== p.unitPrice ? " (negotiated)" : ""}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
             <Button

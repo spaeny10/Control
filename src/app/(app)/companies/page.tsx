@@ -17,11 +17,20 @@ export default async function CompaniesPage() {
   const companies = await prisma.company.findMany({
     orderBy: { name: "asc" },
     include: {
+      parentCompany: { select: { name: true } },
       _count: {
-        select: { contacts: true, projects: true, subscriptions: true },
+        select: {
+          contacts: true,
+          projects: true,
+          subscriptions: true,
+          branches: true,
+        },
       },
     },
   });
+  const parentOptions = companies
+    .filter((c) => !c.parentCompanyId)
+    .map((c) => ({ id: c.id, name: c.name }));
 
   return (
     <div className="space-y-6">
@@ -32,7 +41,7 @@ export default async function CompaniesPage() {
             {companies.length} compan{companies.length === 1 ? "y" : "ies"}
           </p>
         </div>
-        <CompanyFormDialog />
+        <CompanyFormDialog parentOptions={parentOptions} />
       </div>
 
       <Card>
@@ -67,6 +76,17 @@ export default async function CompaniesPage() {
                     >
                       {c.name}
                     </Link>
+                    {c.parentCompany && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        branch of {c.parentCompany.name}
+                      </span>
+                    )}
+                    {c._count.branches > 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {c._count.branches} branch
+                        {c._count.branches === 1 ? "" : "es"}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {[c.billingCity, c.billingState].filter(Boolean).join(", ") ||

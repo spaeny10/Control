@@ -24,6 +24,8 @@ const contactSchema = z.object({
   phone: z.string().optional(),
   notes: z.string().optional(),
   companyId: z.string().min(1, "Company is required"),
+  // Checkbox posts "on" when checked, absent otherwise.
+  isBillingContact: z.string().optional(),
 });
 
 export async function createContact(
@@ -37,12 +39,13 @@ export async function createContact(
     return { ok: false, error: parsed.error.issues[0].message };
   }
 
-  const { email, phone, ...rest } = parsed.data;
+  const { email, phone, isBillingContact, ...rest } = parsed.data;
   const contact = await prisma.contact.create({
     data: {
       ...rest,
       email: email || undefined,
       phone: normalizePhone(phone),
+      isBillingContact: isBillingContact === "on",
     },
   });
   revalidatePath("/contacts");
@@ -62,13 +65,14 @@ export async function updateContact(
     return { ok: false, error: parsed.error.issues[0].message };
   }
 
-  const { email, phone, ...rest } = parsed.data;
+  const { email, phone, isBillingContact, ...rest } = parsed.data;
   const contact = await prisma.contact.update({
     where: { id },
     data: {
       ...rest,
       email: email || null,
       phone: normalizePhone(phone) ?? null,
+      isBillingContact: isBillingContact === "on",
     },
   });
   revalidatePath("/contacts");

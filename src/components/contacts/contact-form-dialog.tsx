@@ -33,6 +33,7 @@ type ContactValues = {
   email?: string | null;
   phone?: string | null;
   companyId?: string;
+  isBillingContact?: boolean;
 };
 
 export function ContactFormDialog({
@@ -155,6 +156,15 @@ export function ContactFormDialog({
               </p>
             )}
           </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="isBillingContact"
+              defaultChecked={contact?.isBillingContact ?? false}
+              className="h-4 w-4 rounded border-input"
+            />
+            Accounts-payable / billing contact
+          </label>
           <div className="flex justify-end gap-2">
             <Button
               type="button"

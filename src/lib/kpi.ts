@@ -27,7 +27,6 @@ export async function getDashboardData() {
     wonCount,
     lostCount,
     overdueInvoices,
-    companiesWithProjects,
     upcomingCompletions,
     leadsLastSixMonths,
   ] = await Promise.all([
@@ -51,7 +50,6 @@ export async function getDashboardData() {
       _sum: { amountDue: true, amountPaid: true },
       _count: true,
     }),
-    prisma.company.count({ where: { projects: { some: {} } } }),
     prisma.project.findMany({
       where: {
         status: "ACTIVE",
@@ -66,12 +64,26 @@ export async function getDashboardData() {
     }),
   ]);
 
-  // Repeat-customer rate needs "companies with >= 2 projects" — do it in JS.
-  const projectCounts = await prisma.project.groupBy({
-    by: ["companyId"],
-    _count: true,
-  });
-  const companiesWith2Plus = projectCounts.filter((p) => p._count >= 2).length;
+  // Repeat-customer rate groups branches under their parent company —
+  // metrics roll up even though quotes/pricing stay per-branch.
+  const [projectCounts, companyParents] = await Promise.all([
+    prisma.project.groupBy({ by: ["companyId"], _count: true }),
+    prisma.company.findMany({
+      select: { id: true, parentCompanyId: true },
+    }),
+  ]);
+  const rootOf = new Map(
+    companyParents.map((c) => [c.id, c.parentCompanyId ?? c.id])
+  );
+  const projectsByRoot = new Map<string, number>();
+  for (const pc of projectCounts) {
+    const root = rootOf.get(pc.companyId) ?? pc.companyId;
+    projectsByRoot.set(root, (projectsByRoot.get(root) ?? 0) + pc._count);
+  }
+  const rootsWithProjects = projectsByRoot.size;
+  const companiesWith2Plus = [...projectsByRoot.values()].filter(
+    (n) => n >= 2
+  ).length;
 
   const mrr = activeSubs.reduce((sum, s) => sum + Number(s.mrr), 0);
   const nonRetired = trailers.filter((t) => t.status !== "RETIRED").length;
@@ -162,8 +174,8 @@ export async function getDashboardData() {
         Number(overdueInvoices._sum.amountPaid ?? 0),
       overdueCount: overdueInvoices._count,
       repeatRate:
-        companiesWithProjects > 0
-          ? Math.round((companiesWith2Plus / companiesWithProjects) * 100)
+        rootsWithProjects > 0
+          ? Math.round((companiesWith2Plus / rootsWithProjects) * 100)
           : null,
       avgDurationMonths,
     },

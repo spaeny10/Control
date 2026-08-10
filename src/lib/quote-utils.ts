@@ -3,14 +3,21 @@ import { prisma } from "@/lib/prisma";
 import { fullName } from "@/lib/format";
 
 export async function getQuoteBuilderOptions() {
-  const [companies, contacts, projects, leads, catalog] = await Promise.all([
+  const [companies, contacts, projects, leads, catalog, overrides] =
+    await Promise.all([
     prisma.company.findMany({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
     prisma.contact.findMany({
       orderBy: { lastName: "asc" },
-      select: { id: true, firstName: true, lastName: true, companyId: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        companyId: true,
+        isBillingContact: true,
+      },
     }),
     prisma.project.findMany({
       where: { status: { not: "COMPLETED" } },
@@ -26,7 +33,16 @@ export async function getQuoteBuilderOptions() {
       where: { isActive: true },
       orderBy: { name: "asc" },
     }),
+    prisma.companyPrice.findMany(),
   ]);
+
+  // { companyId: { planProductId: negotiatedPrice } }
+  const priceOverrides: Record<string, Record<string, number>> = {};
+  for (const o of overrides) {
+    (priceOverrides[o.companyId] ??= {})[o.planProductId] = Number(
+      o.unitPrice
+    );
+  }
 
   return {
     companies,
@@ -34,6 +50,7 @@ export async function getQuoteBuilderOptions() {
       id: c.id,
       name: fullName(c),
       companyId: c.companyId,
+      isBillingContact: c.isBillingContact,
     })),
     projects,
     leads: leads.map((l) => ({
@@ -49,6 +66,7 @@ export async function getQuoteBuilderOptions() {
       unitPrice: Number(p.unitPrice),
       description: p.description,
     })),
+    priceOverrides,
   };
 }
 

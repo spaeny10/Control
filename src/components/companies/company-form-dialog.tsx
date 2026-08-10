@@ -17,6 +17,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
 
@@ -29,15 +36,28 @@ type CompanyValues = {
   billingZip?: string | null;
   website?: string | null;
   notes?: string | null;
+  parentCompanyId?: string | null;
 };
 
-export function CompanyFormDialog({ company }: { company?: CompanyValues }) {
+const NO_PARENT = "__none__";
+
+export function CompanyFormDialog({
+  company,
+  // Companies eligible to be a parent (top-level only). Empty hides the field.
+  parentOptions = [],
+}: {
+  company?: CompanyValues;
+  parentOptions?: { id: string; name: string }[];
+}) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const isEdit = !!company?.id;
 
   function handleSubmit(formData: FormData) {
+    if (formData.get("parentCompanyId") === NO_PARENT) {
+      formData.set("parentCompanyId", "");
+    }
     startTransition(async () => {
       const result = isEdit
         ? await updateCompany(company!.id!, formData)
@@ -121,6 +141,35 @@ export function CompanyFormDialog({ company }: { company?: CompanyValues }) {
               defaultValue={company?.website ?? ""}
             />
           </div>
+          {parentOptions.length > 0 && (
+            <div className="space-y-2">
+              <Label>Branch of</Label>
+              <Select
+                name="parentCompanyId"
+                defaultValue={company?.parentCompanyId ?? NO_PARENT}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Standalone company" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PARENT}>
+                    Standalone company (no parent)
+                  </SelectItem>
+                  {parentOptions
+                    .filter((p) => p.id !== company?.id)
+                    .map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Branches keep their own quotes, contacts, and pricing; metrics
+                roll up to the parent.
+              </p>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="notes">Notes</Label>
             <Textarea
