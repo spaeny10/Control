@@ -12,6 +12,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
+import {
+  CircleDollarSign,
+  Repeat,
+  Truck,
+  Target,
+  Trophy,
+  AlertCircle,
+  RotateCcw,
+  Timer,
+} from "lucide-react";
 
 export const metadata = { title: "Dashboard" };
 
@@ -19,30 +29,40 @@ export default async function DashboardPage() {
   const { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions } =
     await getDashboardData();
 
-  const tiles: { label: string; value: string; sub?: string }[] = [
+  const tiles = [
     {
       label: "MRR",
       value: formatCurrency(stats.mrr),
       sub: `${formatCurrency(stats.arr)} annualized`,
+      icon: CircleDollarSign,
+      tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
       label: "Active subscriptions",
       value: String(stats.activeSubscriptions),
+      icon: Repeat,
+      tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
     {
       label: "Trailer utilization",
       value: `${stats.utilization}%`,
       sub: "deployed / active fleet",
+      icon: Truck,
+      tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
       label: "Pipeline value",
       value: formatCurrency(stats.pipelineValue),
       sub: "open leads",
+      icon: Target,
+      tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
     {
       label: "Win rate",
       value: stats.winRate !== null ? `${stats.winRate}%` : "—",
       sub: "won vs lost leads",
+      icon: Trophy,
+      tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
       label: "Overdue invoices",
@@ -51,11 +71,18 @@ export default async function DashboardPage() {
           ? formatCurrency(stats.overdueAmount)
           : "$0",
       sub: `${stats.overdueCount} invoice${stats.overdueCount === 1 ? "" : "s"}`,
+      icon: AlertCircle,
+      tint:
+        stats.overdueCount > 0
+          ? "bg-destructive/10 text-destructive"
+          : "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
       label: "Repeat customers",
       value: stats.repeatRate !== null ? `${stats.repeatRate}%` : "—",
       sub: "companies with 2+ projects",
+      icon: RotateCcw,
+      tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
     {
       label: "Avg rental duration",
@@ -64,6 +91,8 @@ export default async function DashboardPage() {
           ? `${stats.avgDurationMonths.toFixed(1)} mo`
           : "—",
       sub: "ended subscriptions",
+      icon: Timer,
+      tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
   ];
 
@@ -79,16 +108,25 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {tiles.map((tile) => (
           <Card key={tile.label}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                {tile.label}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{tile.value}</p>
-              {tile.sub && (
-                <p className="text-xs text-muted-foreground">{tile.sub}</p>
-              )}
+            <CardContent className="flex items-center gap-3 pt-6">
+              <div
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tile.tint}`}
+              >
+                <tile.icon className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-medium text-muted-foreground">
+                  {tile.label}
+                </p>
+                <p className="text-xl font-bold tracking-tight">
+                  {tile.value}
+                </p>
+                {tile.sub && (
+                  <p className="truncate text-xs text-muted-foreground">
+                    {tile.sub}
+                  </p>
+                )}
+              </div>
             </CardContent>
           </Card>
         ))}
