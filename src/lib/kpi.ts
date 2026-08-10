@@ -16,38 +16,60 @@ export type MovementPoint = {
 };
 export type LeadsPoint = { month: string; newCompany: number; newProject: number };
 
-export async function getDashboardData(months: number = 6) {
+// Pass a repId to scope every figure to one salesperson: subscriptions by
+// attribution, leads by owner, invoices/projects through their subscriptions.
+export async function getDashboardData(
+  months: number = 6,
+  repId?: string
+) {
   const now = new Date();
   const window = Math.min(36, Math.max(2, months));
+  const subScope = repId ? { salespersonId: repId } : {};
+  const leadScope = repId ? { ownerId: repId } : {};
 
   const [
     activeSubs,
     endedSubs,
     trailers,
+    repDeployedUnits,
     openLeads,
     wonCount,
     lostCount,
     overdueInvoices,
     upcomingCompletions,
-    leadsLastSixMonths,
+    leadsInWindow,
   ] = await Promise.all([
     prisma.subscription.findMany({
-      where: { status: { in: ["ACTIVE", "PAST_DUE", "PAUSED"] } },
+      where: { ...subScope, status: { in: ["ACTIVE", "PAST_DUE", "PAUSED"] } },
       select: { mrr: true, startDate: true },
     }),
     prisma.subscription.findMany({
-      where: { status: "ENDED" },
+      where: { ...subScope, status: "ENDED" },
       select: { mrr: true, startDate: true, endedAt: true, endReason: true },
     }),
     prisma.trailer.findMany({ select: { status: true } }),
+    // Units currently on this rep's sites (fleet-wide utilization isn't
+    // meaningful per rep, so the tile switches to a count when filtered).
+    repId
+      ? prisma.trailerDeployment.count({
+          where: {
+            returnedAt: null,
+            subscription: { salespersonId: repId },
+          },
+        })
+      : Promise.resolve(0),
     prisma.lead.findMany({
-      where: { stage: { notIn: ["WON", "LOST"] } },
+      where: { ...leadScope, stage: { notIn: ["WON", "LOST"] } },
       select: { estValue: true, estMrr: true },
     }),
-    prisma.lead.count({ where: { stage: "WON" } }),
-    prisma.lead.count({ where: { stage: "LOST" } }),
+    prisma.lead.count({ where: { ...leadScope, stage: "WON" } }),
+    prisma.lead.count({ where: { ...leadScope, stage: "LOST" } }),
     prisma.invoice.aggregate({
-      where: { status: "OPEN", dueDate: { lt: now } },
+      where: {
+        status: "OPEN",
+        dueDate: { lt: now },
+        ...(repId ? { subscription: { salespersonId: repId } } : {}),
+      },
       _sum: { amountDue: true, amountPaid: true },
       _count: true,
     }),
@@ -55,20 +77,33 @@ export async function getDashboardData(months: number = 6) {
       where: {
         status: "ACTIVE",
         expectedEnd: { gte: now, lte: addDays(now, 30) },
+        ...(repId
+          ? { subscriptions: { some: { salespersonId: repId } } }
+          : {}),
       },
       include: { company: { select: { name: true } } },
       orderBy: { expectedEnd: "asc" },
     }),
     prisma.lead.findMany({
-      where: { createdAt: { gte: startOfMonth(subMonths(now, window - 1)) } },
+      where: {
+        ...leadScope,
+        createdAt: { gte: startOfMonth(subMonths(now, window - 1)) },
+      },
       select: { createdAt: true, type: true },
     }),
   ]);
 
   // Repeat-customer rate groups branches under their parent company —
-  // metrics roll up even though quotes/pricing stay per-branch.
+  // metrics roll up even though quotes/pricing stay per-branch. When scoped
+  // to a rep, only their customers count.
   const [projectCounts, companyParents] = await Promise.all([
-    prisma.project.groupBy({ by: ["companyId"], _count: true }),
+    prisma.project.groupBy({
+      by: ["companyId"],
+      where: repId
+        ? { company: { subscriptions: { some: { salespersonId: repId } } } }
+        : undefined,
+      _count: true,
+    }),
     prisma.company.findMany({
       select: { id: true, parentCompanyId: true },
     }),
@@ -133,7 +168,7 @@ export async function getDashboardData(months: number = 6) {
   for (let i = window - 1; i >= 0; i--) {
     const mStart = startOfMonth(subMonths(now, i));
     const mEnd = endOfMonth(subMonths(now, i));
-    const inMonth = leadsLastSixMonths.filter(
+    const inMonth = leadsInWindow.filter(
       (l) => l.createdAt >= mStart && l.createdAt <= mEnd
     );
     leadsByMonth.push({
@@ -162,6 +197,9 @@ export async function getDashboardData(months: number = 6) {
       arr: mrr * 12,
       activeSubscriptions: activeSubs.length,
       utilization: nonRetired > 0 ? Math.round((deployed / nonRetired) * 100) : 0,
+      // Only meaningful when scoped to a rep.
+      repDeployedUnits,
+      scopedToRep: !!repId,
       pipelineValue: openLeads.reduce(
         (sum, l) => sum + (l.estValue ? Number(l.estValue) : 0),
         0

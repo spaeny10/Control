@@ -35,21 +35,34 @@ export const metadata = { title: "Dashboard" };
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; rep?: string }>;
 }) {
-  const { range } = await searchParams;
+  const { range, rep } = await searchParams;
   const months = ["3", "6", "12", "24"].includes(range ?? "")
     ? parseInt(range!)
     : 6;
 
   const session = await auth();
+  const reps = await prisma.user.findMany({
+    where: {
+      isActive: true,
+      OR: [{ subscriptions: { some: {} } }, { ownedLeads: { some: {} } }],
+    },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+  // Ignore an unknown/stale rep id rather than showing an empty dashboard.
+  const repId = reps.some((r) => r.id === rep) ? rep : undefined;
+  const repName = reps.find((r) => r.id === repId)?.name;
+
   const [
     { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions },
     myActivities,
   ] = await Promise.all([
-    getDashboardData(months),
+    getDashboardData(months, repId),
     prisma.activity.findMany({
-      where: { done: false, assigneeId: session?.user?.id },
+      // When filtered to a rep, show that rep's activities instead of mine.
+      where: { done: false, assigneeId: repId ?? session?.user?.id },
       orderBy: { dueDate: "asc" },
       take: 8,
       include: {
@@ -104,13 +117,21 @@ export default async function DashboardPage({
       icon: Repeat,
       tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
-    {
-      label: "Trailer utilization",
-      value: `${stats.utilization}%`,
-      sub: "deployed / active fleet",
-      icon: Truck,
-      tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
-    },
+    stats.scopedToRep
+      ? {
+          label: "Units on their sites",
+          value: String(stats.repDeployedUnits),
+          sub: "currently deployed",
+          icon: Truck,
+          tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
+        }
+      : {
+          label: "Trailer utilization",
+          value: `${stats.utilization}%`,
+          sub: "deployed / active fleet",
+          icon: Truck,
+          tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
+        },
     {
       label: "Pipeline MRR",
       value: `${formatCurrency(stats.pipelineMrr)}/mo`,
@@ -163,22 +184,42 @@ export default async function DashboardPage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground">
-            The pulse of the BIGVIEW rental business
+            {repName
+              ? `Scoped to ${repName} — subscriptions they closed and leads they own`
+              : "The pulse of the BIGVIEW rental business"}
           </p>
         </div>
-        <FilterPills
-          basePath="/"
-          param="range"
-          current={String(months)}
-          includeAll={false}
-          options={[
-            { value: "3", label: "3 mo" },
-            { value: "6", label: "6 mo" },
-            { value: "12", label: "12 mo" },
-            { value: "24", label: "24 mo" },
-          ]}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterPills
+            basePath="/"
+            param="range"
+            current={String(months)}
+            includeAll={false}
+            keepParams={{ rep: repId }}
+            options={[
+              { value: "3", label: "3 mo" },
+              { value: "6", label: "6 mo" },
+              { value: "12", label: "12 mo" },
+              { value: "24", label: "24 mo" },
+            ]}
+          />
+        </div>
       </div>
+
+      {reps.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Sales rep
+          </span>
+          <FilterPills
+            basePath="/"
+            param="rep"
+            current={repId}
+            keepParams={{ range: months === 6 ? undefined : String(months) }}
+            options={reps.map((r) => ({ value: r.id, label: r.name }))}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {tiles.map((tile) => (
@@ -211,7 +252,8 @@ export default async function DashboardPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              My activities ({activityViews.length})
+              {repName ? `${repName}'s activities` : "My activities"} (
+              {activityViews.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
