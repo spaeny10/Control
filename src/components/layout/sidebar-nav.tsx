@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   Users,
   BadgeDollarSign,
-  Building2,
   Contact,
   HardHat,
   FileText,
@@ -33,7 +32,6 @@ const SECTIONS: { area: AppArea; label: string; items: NavItem[] }[] = [
     items: [
       { href: "/leads", label: "Leads", icon: Users },
       { href: "/quotes", label: "Quotes", icon: FileText },
-      { href: "/companies", label: "Companies", icon: Building2 },
       { href: "/contacts", label: "Contacts", icon: Contact },
       { href: "/projects", label: "Projects", icon: HardHat },
       { href: "/sales", label: "Commissions", icon: BadgeDollarSign },
@@ -81,8 +79,15 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 
 export function SidebarNav({ areas }: { areas: AppArea[] }) {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
+    // Company detail pages live under /companies but belong to Contacts.
+    if (href === "/contacts")
+      return (
+        pathname.startsWith("/contacts") || pathname.startsWith("/companies")
+      );
+    return pathname.startsWith(href);
+  };
   const hasTechAdmin = areas.includes("TECH_ADMIN");
 
   return (
