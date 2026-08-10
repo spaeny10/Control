@@ -13,12 +13,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
+import { FilterPills } from "@/components/layout/filter-pills";
 
 export const metadata = { title: "Projects" };
 
-export default async function ProjectsPage() {
+export default async function ProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status } = await searchParams;
+  const validStatus = ["UPCOMING", "ACTIVE", "COMPLETED"].includes(status ?? "")
+    ? (status as "UPCOMING" | "ACTIVE" | "COMPLETED")
+    : undefined;
+
   const [projects, companies] = await Promise.all([
     prisma.project.findMany({
+      where: validStatus ? { status: validStatus } : undefined,
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
         company: { select: { id: true, name: true } },
@@ -40,7 +51,19 @@ export default async function ProjectsPage() {
             Construction projects & temporary jobs your trailers serve
           </p>
         </div>
-        <ProjectFormDialog companies={companies} />
+        <div className="flex items-center gap-2">
+          <FilterPills
+            basePath="/projects"
+            param="status"
+            current={validStatus}
+            options={[
+              { value: "UPCOMING", label: "Upcoming" },
+              { value: "ACTIVE", label: "Active" },
+              { value: "COMPLETED", label: "Completed" },
+            ]}
+          />
+          <ProjectFormDialog companies={companies} />
+        </div>
       </div>
 
       <Card>

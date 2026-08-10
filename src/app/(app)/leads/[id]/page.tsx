@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { Chatter } from "@/components/chatter/chatter";
+import { ActivitiesCard } from "@/components/activities/activities-card";
 import { LeadStageSelect } from "@/components/leads/lead-stage-select";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -163,7 +164,11 @@ export default async function LeadDetailPage({
           </Card>
         </div>
 
-        <div>
+        <div className="space-y-6">
+          <ActivitiesCard
+            parent={{ leadId: lead.id }}
+            revalidate={`/leads/${lead.id}`}
+          />
           <Chatter
             messages={lead.messages}
             parent={{ leadId: lead.id }}

@@ -17,12 +17,25 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
+import { FilterPills } from "@/components/layout/filter-pills";
 import { statusBadgeVariant } from "@/lib/badges";
 
 export const metadata = { title: "Subscriptions" };
 
-export default async function SubscriptionsPage() {
+export default async function SubscriptionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status } = await searchParams;
+  const validStatus = ["ACTIVE", "PAST_DUE", "PAUSED", "ENDED"].includes(
+    status ?? ""
+  )
+    ? (status as "ACTIVE" | "PAST_DUE" | "PAUSED" | "ENDED")
+    : undefined;
+
   const subscriptions = await prisma.subscription.findMany({
+    where: validStatus ? { status: validStatus } : undefined,
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     include: {
       company: { select: { id: true, name: true } },
@@ -48,6 +61,17 @@ export default async function SubscriptionsPage() {
             {active.length} active · {formatCurrency(totalMrr)}/mo MRR
           </p>
         </div>
+        <FilterPills
+          basePath="/subscriptions"
+          param="status"
+          current={validStatus}
+          options={[
+            { value: "ACTIVE", label: "Active" },
+            { value: "PAST_DUE", label: "Past due" },
+            { value: "PAUSED", label: "Paused" },
+            { value: "ENDED", label: "Ended" },
+          ]}
+        />
       </div>
 
       <Card>

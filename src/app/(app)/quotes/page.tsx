@@ -15,12 +15,25 @@ import { formatCurrency, formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { quoteTotals } from "@/lib/quote-utils";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
+import { FilterPills } from "@/components/layout/filter-pills";
 import { Plus } from "lucide-react";
 
 export const metadata = { title: "Quotes" };
 
-export default async function QuotesPage() {
+export default async function QuotesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status } = await searchParams;
+  const validStatus = ["DRAFT", "SENT", "ACCEPTED", "DECLINED", "EXPIRED"].includes(
+    status ?? ""
+  )
+    ? (status as "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED")
+    : undefined;
+
   const quotes = await prisma.quote.findMany({
+    where: validStatus ? { status: validStatus } : undefined,
     orderBy: { createdAt: "desc" },
     include: {
       company: { select: { id: true, name: true } },
@@ -37,11 +50,25 @@ export default async function QuotesPage() {
             {quotes.length} quote{quotes.length === 1 ? "" : "s"}
           </p>
         </div>
-        <Button asChild className="gap-1">
-          <Link href="/quotes/new">
-            <Plus className="h-4 w-4" /> New quote
-          </Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterPills
+            basePath="/quotes"
+            param="status"
+            current={validStatus}
+            options={[
+              { value: "DRAFT", label: "Draft" },
+              { value: "SENT", label: "Sent" },
+              { value: "ACCEPTED", label: "Accepted" },
+              { value: "DECLINED", label: "Declined" },
+              { value: "EXPIRED", label: "Expired" },
+            ]}
+          />
+          <Button asChild className="gap-1">
+            <Link href="/quotes/new">
+              <Plus className="h-4 w-4" /> New quote
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <Card>

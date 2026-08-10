@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { Chatter } from "@/components/chatter/chatter";
+import { ActivitiesCard } from "@/components/activities/activities-card";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -171,7 +172,11 @@ export default async function ProjectDetailPage({
           )}
         </div>
 
-        <div>
+        <div className="space-y-6">
+          <ActivitiesCard
+            parent={{ projectId: project.id }}
+            revalidate={`/projects/${project.id}`}
+          />
           <Chatter
             messages={project.messages}
             parent={{ projectId: project.id }}

@@ -34,6 +34,7 @@ export default async function TrailerDetailPage({
             include: {
               company: { select: { id: true, name: true } },
               project: { select: { id: true, name: true } },
+              deployments: { select: { id: true, returnedAt: true } },
             },
           },
         },
@@ -52,6 +53,34 @@ export default async function TrailerDetailPage({
     (sum, log) => sum + (log.cost ? Number(log.cost) : 0),
     0
   );
+
+  // Unit economics: revenue attributed to this unit is estimated by splitting
+  // each subscription's normalized monthly value evenly across its units for
+  // the days this unit was on site.
+  const now = new Date();
+  let deployedDays = 0;
+  let revenueEstimate = 0;
+  for (const d of trailer.deployments) {
+    const end = d.returnedAt ?? now;
+    const days = Math.max(
+      0,
+      (end.getTime() - d.deployedAt.getTime()) / 86_400_000
+    );
+    deployedDays += days;
+    const siblingDeployments = d.subscription.deployments;
+    const openUnits = siblingDeployments.filter((x) => !x.returnedAt).length;
+    const unitCount = Math.max(1, openUnits || siblingDeployments.length);
+    revenueEstimate += (days / 30.44) * (Number(d.subscription.mrr) / unitCount);
+  }
+  const lifeDays = Math.max(
+    1,
+    (now.getTime() - trailer.createdAt.getTime()) / 86_400_000
+  );
+  const lifetimeUtilization = Math.min(
+    100,
+    Math.round((deployedDays / lifeDays) * 100)
+  );
+  const net = revenueEstimate - totalMaintenanceCost;
 
   return (
     <div className="space-y-6">
@@ -79,6 +108,45 @@ export default async function TrailerDetailPage({
             }}
           />
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {[
+          {
+            label: "Lifetime revenue (est.)",
+            value: formatCurrency(Math.round(revenueEstimate)),
+          },
+          {
+            label: "Maintenance cost",
+            value: formatCurrency(totalMaintenanceCost),
+          },
+          {
+            label: "Net (est.)",
+            value: formatCurrency(Math.round(net)),
+            negative: net < 0,
+          },
+          {
+            label: "Lifetime utilization",
+            value: `${lifetimeUtilization}%`,
+          },
+        ].map((stat) => (
+          <Card key={stat.label}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {stat.label}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p
+                className={`text-2xl font-bold ${
+                  stat.negative ? "text-destructive" : ""
+                }`}
+              >
+                {stat.value}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

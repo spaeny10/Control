@@ -16,6 +16,7 @@ import { formatCurrency, formatDate, fullName } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { auth } from "@/lib/auth";
 import { CompanyPricesCard } from "@/components/companies/company-prices-card";
+import { ActivitiesCard } from "@/components/activities/activities-card";
 
 export const metadata = { title: "Company" };
 
@@ -322,6 +323,10 @@ export default async function CompanyDetailPage({
         </div>
 
         <div className="space-y-6">
+          <ActivitiesCard
+            parent={{ companyId: company.id }}
+            revalidate={`/companies/${company.id}`}
+          />
           {isAdmin && (
             <CompanyPricesCard companyId={company.id} rows={priceRows} />
           )}

@@ -11,7 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
+import { prisma } from "@/lib/prisma";
+import { auth } from "@/lib/auth";
+import {
+  ActivityRow,
+  type ActivityView,
+} from "@/components/activities/activity-row";
 import {
   CircleDollarSign,
   Repeat,
@@ -26,8 +32,53 @@ import {
 export const metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
-  const { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions } =
-    await getDashboardData();
+  const session = await auth();
+  const [
+    { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions },
+    myActivities,
+  ] = await Promise.all([
+    getDashboardData(),
+    prisma.activity.findMany({
+      where: { done: false, assigneeId: session?.user?.id },
+      orderBy: { dueDate: "asc" },
+      take: 8,
+      include: {
+        lead: { select: { id: true, title: true } },
+        company: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true } },
+        subscription: {
+          select: { id: true, company: { select: { name: true } } },
+        },
+      },
+    }),
+  ]);
+
+  const now = new Date();
+  const activityViews: ActivityView[] = myActivities.map((a) => {
+    const parent = a.lead
+      ? { href: `/leads/${a.lead.id}`, label: a.lead.title }
+      : a.company
+        ? { href: `/companies/${a.company.id}`, label: a.company.name }
+        : a.project
+          ? { href: `/projects/${a.project.id}`, label: a.project.name }
+          : a.subscription
+            ? {
+                href: `/subscriptions/${a.subscription.id}`,
+                label: a.subscription.company.name,
+              }
+            : null;
+    return {
+      id: a.id,
+      type: a.type,
+      title: a.title,
+      notes: a.notes,
+      dueLabel: formatDateTime(a.dueDate),
+      overdue: a.dueDate < now,
+      assigneeName: null,
+      parentHref: parent?.href,
+      parentLabel: parent?.label,
+    };
+  });
 
   const tiles = [
     {
@@ -131,6 +182,23 @@ export default async function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {activityViews.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              My activities ({activityViews.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {activityViews.map((a) => (
+                <ActivityRow key={a.id} activity={a} />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

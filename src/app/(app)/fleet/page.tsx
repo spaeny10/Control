@@ -17,11 +17,24 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { statusBadgeVariant } from "@/lib/badges";
+import { FilterPills } from "@/components/layout/filter-pills";
 
 export const metadata = { title: "Fleet" };
 
-export default async function FleetPage() {
+export default async function FleetPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status } = await searchParams;
+  const validStatus = ["AVAILABLE", "DEPLOYED", "MAINTENANCE", "RETIRED"].includes(
+    status ?? ""
+  )
+    ? (status as "AVAILABLE" | "DEPLOYED" | "MAINTENANCE" | "RETIRED")
+    : undefined;
+
   const trailers = await prisma.trailer.findMany({
+    where: validStatus ? { status: validStatus } : undefined,
     orderBy: { unitNumber: "asc" },
     include: {
       deployments: {
@@ -60,7 +73,20 @@ export default async function FleetPage() {
             BIGVIEW trailer units and where they are
           </p>
         </div>
-        <TrailerFormDialog />
+        <div className="flex items-center gap-2">
+          <FilterPills
+            basePath="/fleet"
+            param="status"
+            current={validStatus}
+            options={[
+              { value: "AVAILABLE", label: "Available" },
+              { value: "DEPLOYED", label: "Deployed" },
+              { value: "MAINTENANCE", label: "Maintenance" },
+              { value: "RETIRED", label: "Retired" },
+            ]}
+          />
+          <TrailerFormDialog />
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

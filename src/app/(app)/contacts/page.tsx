@@ -14,23 +14,39 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { fullName } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Contacts" };
 
 export default async function ContactsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; q?: string }>;
 }) {
-  const { view } = await searchParams;
+  const { view, q } = await searchParams;
   const showCompanies = view === "companies";
+  const search = q?.trim();
 
   const [contacts, companies] = await Promise.all([
     prisma.contact.findMany({
+      where: search
+        ? {
+            OR: [
+              { firstName: { contains: search, mode: "insensitive" } },
+              { lastName: { contains: search, mode: "insensitive" } },
+              { email: { contains: search, mode: "insensitive" } },
+              { phone: { contains: search } },
+              { company: { name: { contains: search, mode: "insensitive" } } },
+            ],
+          }
+        : undefined,
       orderBy: { lastName: "asc" },
       include: { company: { select: { id: true, name: true } } },
     }),
     prisma.company.findMany({
+      where: search
+        ? { name: { contains: search, mode: "insensitive" } }
+        : undefined,
       orderBy: { name: "asc" },
       include: {
         parentCompany: { select: { name: true } },
@@ -69,7 +85,8 @@ export default async function ContactsPage({
             Everyone you do business with — people and companies
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search people & companies..." />
           <div className="flex rounded-lg border bg-card p-1">
             {toggle.map((t) => (
               <Link
