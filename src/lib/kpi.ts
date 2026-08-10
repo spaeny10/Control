@@ -16,8 +16,9 @@ export type MovementPoint = {
 };
 export type LeadsPoint = { month: string; newCompany: number; newProject: number };
 
-export async function getDashboardData() {
+export async function getDashboardData(months: number = 6) {
   const now = new Date();
+  const window = Math.min(36, Math.max(2, months));
 
   const [
     activeSubs,
@@ -59,7 +60,7 @@ export async function getDashboardData() {
       orderBy: { expectedEnd: "asc" },
     }),
     prisma.lead.findMany({
-      where: { createdAt: { gte: startOfMonth(subMonths(now, 5)) } },
+      where: { createdAt: { gte: startOfMonth(subMonths(now, window - 1)) } },
       select: { createdAt: true, type: true },
     }),
   ]);
@@ -89,10 +90,10 @@ export async function getDashboardData() {
   const nonRetired = trailers.filter((t) => t.status !== "RETIRED").length;
   const deployed = trailers.filter((t) => t.status === "DEPLOYED").length;
 
-  // MRR trend — last 12 months from subscription start/end dates.
+  // MRR trend over the selected window, from subscription start/end dates.
   const allSubs = [...activeSubs.map((s) => ({ ...s, endedAt: null as Date | null })), ...endedSubs];
   const mrrTrend: MonthPoint[] = [];
-  for (let i = 11; i >= 0; i--) {
+  for (let i = window - 1; i >= 0; i--) {
     const monthEnd = endOfMonth(subMonths(now, i));
     const value = allSubs.reduce((sum, s) => {
       const started = s.startDate <= monthEnd;
@@ -102,9 +103,9 @@ export async function getDashboardData() {
     mrrTrend.push({ month: format(monthEnd, "MMM"), mrr: value });
   }
 
-  // MRR movement — last 6 months: new vs roll-off vs churn.
+  // MRR movement over the window: new vs roll-off vs churn.
   const movement: MovementPoint[] = [];
-  for (let i = 5; i >= 0; i--) {
+  for (let i = window - 1; i >= 0; i--) {
     const mStart = startOfMonth(subMonths(now, i));
     const mEnd = endOfMonth(subMonths(now, i));
     const newMrr = allSubs
@@ -127,9 +128,9 @@ export async function getDashboardData() {
     });
   }
 
-  // Leads by month by type — last 6 months.
+  // Leads by month by type over the window.
   const leadsByMonth: LeadsPoint[] = [];
-  for (let i = 5; i >= 0; i--) {
+  for (let i = window - 1; i >= 0; i--) {
     const mStart = startOfMonth(subMonths(now, i));
     const mEnd = endOfMonth(subMonths(now, i));
     const inMonth = leadsLastSixMonths.filter(

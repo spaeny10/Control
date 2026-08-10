@@ -18,6 +18,7 @@ import {
   ActivityRow,
   type ActivityView,
 } from "@/components/activities/activity-row";
+import { FilterPills } from "@/components/layout/filter-pills";
 import {
   CircleDollarSign,
   Repeat,
@@ -31,13 +32,22 @@ import {
 
 export const metadata = { title: "Dashboard" };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ range?: string }>;
+}) {
+  const { range } = await searchParams;
+  const months = ["3", "6", "12", "24"].includes(range ?? "")
+    ? parseInt(range!)
+    : 6;
+
   const session = await auth();
   const [
     { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions },
     myActivities,
   ] = await Promise.all([
-    getDashboardData(),
+    getDashboardData(months),
     prisma.activity.findMany({
       where: { done: false, assigneeId: session?.user?.id },
       orderBy: { dueDate: "asc" },
@@ -149,11 +159,25 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          The pulse of the BIGVIEW rental business
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            The pulse of the BIGVIEW rental business
+          </p>
+        </div>
+        <FilterPills
+          basePath="/"
+          param="range"
+          current={String(months)}
+          includeAll={false}
+          options={[
+            { value: "3", label: "3 mo" },
+            { value: "6", label: "6 mo" },
+            { value: "12", label: "12 mo" },
+            { value: "24", label: "24 mo" },
+          ]}
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -203,7 +227,9 @@ export default async function DashboardPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">MRR — last 12 months</CardTitle>
+            <CardTitle className="text-base">
+              MRR — last {months} months
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <MrrTrendChart data={mrrTrend} />

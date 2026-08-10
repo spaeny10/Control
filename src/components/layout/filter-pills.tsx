@@ -9,12 +9,15 @@ export function FilterPills({
   current,
   options,
   keepParams = {},
+  includeAll = true,
 }: {
   basePath: string;
   param: string;
   current: string | undefined;
   options: { value: string; label: string; count?: number }[];
   keepParams?: Record<string, string | undefined>;
+  // Omit the "All" pill (e.g. range selectors where a default is always set).
+  includeAll?: boolean;
 }) {
   function hrefFor(value: string | null) {
     const params = new URLSearchParams();
@@ -26,7 +29,9 @@ export function FilterPills({
     return qs ? `${basePath}?${qs}` : basePath;
   }
 
-  const pills = [{ value: null as string | null, label: "All" }, ...options];
+  const pills = includeAll
+    ? [{ value: null as string | null, label: "All" }, ...options]
+    : options;
 
   return (
     <div className="flex flex-wrap items-center gap-1 rounded-lg border bg-card p-1">
