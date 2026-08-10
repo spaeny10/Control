@@ -24,7 +24,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mb-2 flex justify-center">
-            <BigviewLogo textClassName="text-3xl" markClassName="h-8" />
+            <BigviewLogo textClassName="text-4xl" />
           </div>
           <CardDescription>
             Sign in to manage rentals & subscriptions

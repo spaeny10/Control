@@ -44,7 +44,7 @@ export default async function PublicQuotePage({
     <div className="min-h-screen bg-muted/40">
       <div className="mx-auto max-w-3xl space-y-6 p-4 py-10 sm:p-10">
         <div className="flex flex-col items-center gap-2 text-center">
-          <BigviewLogo textClassName="text-3xl" markClassName="h-9" />
+          <BigviewLogo textClassName="text-4xl" />
           <p className="text-sm text-muted-foreground">
             Security Trailer Rental Quote
           </p>
