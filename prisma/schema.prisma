@@ -111,8 +111,9 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  ownedLeads Lead[]    @relation("LeadOwner")
-  messages   Message[]
+  ownedLeads   Lead[]        @relation("LeadOwner")
+  messages     Message[]
+  dispatchJobs DispatchJob[] @relation("JobDriver")
 }
 
 // ---------- CRM ----------
@@ -385,9 +386,10 @@ model Subscription {
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
-  deployments TrailerDeployment[]
-  invoices    Invoice[]
-  messages    Message[]
+  deployments  TrailerDeployment[]
+  invoices     Invoice[]
+  messages     Message[]
+  dispatchJobs DispatchJob[]
 
   @@index([companyId])
   @@index([status])
@@ -414,6 +416,44 @@ model Invoice {
   updatedAt        DateTime      @updatedAt
 
   @@index([subscriptionId])
+  @@index([status])
+}
+
+// ---------- Dispatch ----------
+
+enum JobType {
+  DELIVERY
+  PICKUP
+  SERVICE
+}
+
+enum JobStatus {
+  SCHEDULED
+  IN_PROGRESS
+  DONE
+  CANCELED
+}
+
+// A dispatch job: deliver/pick up/service trailers on a date, assigned to a
+// team member. Suggested automatically from new subscriptions and project
+// end dates, or created by hand.
+model DispatchJob {
+  id             String    @id @default(cuid())
+  type           JobType
+  status         JobStatus @default(SCHEDULED)
+  scheduledFor   DateTime
+  notes          String?
+  siteAddress    String?
+  driverId       String?
+  driver         User?     @relation("JobDriver", fields: [driverId], references: [id], onDelete: SetNull)
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  trailerIds     String[] // unit ids involved (loose reference for flexibility)
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([scheduledFor])
   @@index([status])
 }
 

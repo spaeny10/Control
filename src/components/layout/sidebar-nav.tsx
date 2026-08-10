@@ -13,6 +13,7 @@ import {
   Repeat,
   Receipt,
   Truck,
+  CalendarDays,
   Settings,
 } from "lucide-react";
 
@@ -26,6 +27,7 @@ const navItems = [
   { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
   { href: "/invoices", label: "Invoices", icon: Receipt },
   { href: "/fleet", label: "Fleet", icon: Truck },
+  { href: "/dispatch", label: "Dispatch", icon: CalendarDays },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
