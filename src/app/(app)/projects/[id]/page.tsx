@@ -80,7 +80,23 @@ export default async function ProjectDetailPage({
             </p>
           )}
         </div>
-        <ProjectFormDialog project={project} companies={[]} fixedCompanyId={project.companyId} />
+        <ProjectFormDialog
+          project={{
+            id: project.id,
+            name: project.name,
+            companyId: project.companyId,
+            status: project.status,
+            siteStreet: project.siteStreet,
+            siteCity: project.siteCity,
+            siteState: project.siteState,
+            siteZip: project.siteZip,
+            expectedStart: project.expectedStart,
+            expectedEnd: project.expectedEnd,
+            notes: project.notes,
+          }}
+          companies={[]}
+          fixedCompanyId={project.companyId}
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

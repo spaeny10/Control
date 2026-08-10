@@ -53,7 +53,18 @@ export default async function CompanyDetailPage({
           <h1 className="text-2xl font-bold tracking-tight">{company.name}</h1>
           <p className="text-muted-foreground">{address || "No address"}</p>
         </div>
-        <CompanyFormDialog company={company} />
+        <CompanyFormDialog
+          company={{
+            id: company.id,
+            name: company.name,
+            billingStreet: company.billingStreet,
+            billingCity: company.billingCity,
+            billingState: company.billingState,
+            billingZip: company.billingZip,
+            website: company.website,
+            notes: company.notes,
+          }}
+        />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">

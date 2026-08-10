@@ -70,7 +70,14 @@ export default async function TrailerDetailPage({
         <div className="flex items-center gap-2">
           <TrailerStatusSelect trailerId={trailer.id} status={trailer.status} />
           <MaintenanceLogDialog trailerId={trailer.id} />
-          <TrailerFormDialog trailer={trailer} />
+          <TrailerFormDialog
+            trailer={{
+              id: trailer.id,
+              unitNumber: trailer.unitNumber,
+              model: trailer.model,
+              notes: trailer.notes,
+            }}
+          />
         </div>
       </div>
 
