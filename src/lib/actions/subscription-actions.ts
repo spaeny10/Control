@@ -58,6 +58,7 @@ export async function convertQuoteToSubscription(input: {
       contact: true,
       lineItems: true,
       subscriptions: true,
+      lead: { select: { ownerId: true } },
     },
   });
   if (!quote) return { ok: false, error: "Quote not found" };
@@ -163,6 +164,9 @@ export async function convertQuoteToSubscription(input: {
       companyId: quote.companyId,
       projectId: quote.projectId,
       quoteId: quote.id,
+      // Commission attribution: the lead owner won this; fall back to
+      // whoever converted the quote.
+      salespersonId: quote.lead?.ownerId ?? session.user.id,
       deployments: {
         create: trailerIds.map((trailerId) => ({ trailerId })),
       },

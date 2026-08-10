@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { ChangePasswordForm } from "@/components/settings/change-password-form";
 import { UserFormDialog } from "@/components/settings/user-form-dialog";
 import { ProductFormDialog } from "@/components/settings/product-form-dialog";
+import { SalesTeamsCard } from "@/components/settings/sales-teams-card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Card,
@@ -16,17 +17,30 @@ import { formatCurrency } from "@/lib/format";
 
 export const metadata = { title: "Settings" };
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
   const session = await auth();
   const isAdmin = session?.user?.role === "ADMIN";
+  const validTabs = ["profile", "team", "sales", "catalog", "integrations"];
+  const defaultTab = validTabs.includes(tab ?? "") ? tab! : "profile";
 
-  const [users, products] = await Promise.all([
+  const [users, products, teams] = await Promise.all([
     isAdmin
       ? prisma.user.findMany({ orderBy: { name: "asc" } })
       : Promise.resolve([]),
     prisma.planProduct.findMany({
       orderBy: [{ isActive: "desc" }, { name: "asc" }],
     }),
+    isAdmin
+      ? prisma.salesTeam.findMany({
+          orderBy: { name: "asc" },
+          include: { _count: { select: { members: true } } },
+        })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -38,10 +52,11 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-4">
+      <Tabs defaultValue={defaultTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="profile">My account</TabsTrigger>
           {isAdmin && <TabsTrigger value="team">Team</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="sales">Sales teams</TabsTrigger>}
           <TabsTrigger value="catalog">Price catalog</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
         </TabsList>
@@ -113,6 +128,26 @@ export default async function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="sales">
+            <SalesTeamsCard
+              teams={teams.map((t) => ({
+                id: t.id,
+                name: t.name,
+                memberCount: t._count.members,
+              }))}
+              reps={users
+                .filter((u) => u.isActive)
+                .map((u) => ({
+                  id: u.id,
+                  name: u.name,
+                  salesTeamId: u.salesTeamId,
+                  commissionRate: Number(u.commissionRate),
+                }))}
+            />
           </TabsContent>
         )}
 

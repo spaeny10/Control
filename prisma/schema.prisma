@@ -108,12 +108,25 @@ model User {
   passwordHash String
   role         Role     @default(MEMBER)
   isActive     Boolean  @default(true)
+  // Commission as a percent of attributed active MRR per month (e.g. 5 = 5%).
+  commissionRate Decimal @default(0) @db.Decimal(5, 2)
+  salesTeamId  String?
+  salesTeam    SalesTeam? @relation(fields: [salesTeamId], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  ownedLeads   Lead[]        @relation("LeadOwner")
-  messages     Message[]
-  dispatchJobs DispatchJob[] @relation("JobDriver")
+  ownedLeads    Lead[]         @relation("LeadOwner")
+  messages      Message[]
+  dispatchJobs  DispatchJob[]  @relation("JobDriver")
+  subscriptions Subscription[] @relation("SubscriptionSalesperson")
+}
+
+model SalesTeam {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  members User[]
 }
 
 // ---------- CRM ----------
@@ -408,6 +421,10 @@ model Subscription {
   project              Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
   quoteId              String?
   quote                Quote?                 @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  // Sales attribution: who won this business (from the lead owner at
+  // conversion). Drives commission on active MRR.
+  salespersonId        String?
+  salesperson          User?                  @relation("SubscriptionSalesperson", fields: [salespersonId], references: [id], onDelete: SetNull)
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 

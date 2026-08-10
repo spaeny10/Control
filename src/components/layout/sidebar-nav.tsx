@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   Users,
+  BadgeDollarSign,
   Building2,
   Contact,
   HardHat,
@@ -20,6 +21,7 @@ import {
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/leads", label: "Leads", icon: Users },
+  { href: "/sales", label: "Sales", icon: BadgeDollarSign },
   { href: "/companies", label: "Companies", icon: Building2 },
   { href: "/contacts", label: "Contacts", icon: Contact },
   { href: "/projects", label: "Projects", icon: HardHat },
