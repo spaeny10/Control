@@ -76,7 +76,7 @@ export default async function SalesPage() {
       by: ["ownerId"],
       where: { stage: { notIn: ["WON", "LOST"] } },
       _count: true,
-      _sum: { estValue: true },
+      _sum: { estValue: true, estMrr: true },
     }),
   ]);
 
@@ -122,6 +122,9 @@ export default async function SalesPage() {
       completedThisWeek: countBy(completedThisWeek, u.id),
       openLeadCount: leadRow?._count ?? 0,
       openPipeline: leadRow?._sum.estValue ? Number(leadRow._sum.estValue) : 0,
+      openPipelineMrr: leadRow?._sum.estMrr
+        ? Number(leadRow._sum.estMrr)
+        : 0,
     };
   });
 
@@ -214,7 +217,8 @@ export default async function SalesPage() {
                 <TableHead className="text-right">Overdue</TableHead>
                 <TableHead className="text-right">Done (7d)</TableHead>
                 <TableHead className="text-right">Open leads</TableHead>
-                <TableHead className="text-right">Open pipeline</TableHead>
+                <TableHead className="text-right">Pipeline MRR</TableHead>
+                <TableHead className="text-right">Pipeline total</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -248,6 +252,9 @@ export default async function SalesPage() {
                     {rep.openLeadCount}
                   </TableCell>
                   <TableCell className="text-right font-medium">
+                    {formatCurrency(rep.openPipelineMrr)}/mo
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
                     {formatCurrency(rep.openPipeline)}
                   </TableCell>
                   <TableCell className="text-right">

@@ -24,6 +24,7 @@ export type KanbanLead = {
   title: string;
   type: "NEW_COMPANY" | "NEW_PROJECT";
   stage: LeadStage;
+  estMrr: number | null;
   estValue: number | null;
   companyName: string | null;
   contactName: string | null;
@@ -70,8 +71,9 @@ export function LeadsKanban({ leads }: { leads: KanbanLead[] }) {
       <div className="flex gap-3 overflow-x-auto pb-4">
         {STAGES.map((stage) => {
           const stageLeads = leads.filter((l) => l.stage === stage.key);
+          // Column header shows pipeline MRR — the number that compounds.
           const total = stageLeads.reduce(
-            (sum, l) => sum + (l.estValue ?? 0),
+            (sum, l) => sum + (l.estMrr ?? 0),
             0
           );
           return (
@@ -93,7 +95,7 @@ export function LeadsKanban({ leads }: { leads: KanbanLead[] }) {
                 <span className="text-sm font-semibold">{stage.label}</span>
                 <span className="text-xs text-muted-foreground">
                   {stageLeads.length}
-                  {total > 0 && ` · ${formatCurrency(total)}`}
+                  {total > 0 && ` · ${formatCurrency(total)}/mo`}
                 </span>
               </div>
               <div className="flex flex-1 flex-col gap-2 p-2">
@@ -128,9 +130,14 @@ export function LeadsKanban({ leads }: { leads: KanbanLead[] }) {
                           ? "New company"
                           : "New project"}
                       </Badge>
+                      {lead.estMrr !== null && (
+                        <span className="text-xs font-medium text-foreground">
+                          {formatCurrency(lead.estMrr)}/mo
+                        </span>
+                      )}
                       {lead.estValue !== null && (
-                        <span className="text-xs font-medium text-muted-foreground">
-                          {formatCurrency(lead.estValue)}
+                        <span className="text-xs text-muted-foreground">
+                          {formatCurrency(lead.estValue)} total
                         </span>
                       )}
                     </div>

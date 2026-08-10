@@ -221,6 +221,10 @@ model Lead {
   title         String
   type          LeadType
   stage         LeadStage @default(NEW)
+  // Estimated monthly recurring revenue if won, the expected rental length,
+  // and the resulting total contract value (mrr x months + one-times).
+  estMrr        Decimal?  @db.Decimal(12, 2)
+  estMonths     Int?
   estValue      Decimal?  @db.Decimal(12, 2)
   source        String?
   expectedClose DateTime?

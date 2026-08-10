@@ -13,12 +13,35 @@ const leadSchema = z.object({
   companyId: z.string().optional(),
   contactId: z.string().optional(),
   projectId: z.string().optional(),
+  estMrr: z.string().optional(),
+  estMonths: z.string().optional(),
   estValue: z.string().optional(),
   source: z.string().optional(),
   expectedClose: z.string().optional(),
   // For NEW_PROJECT leads: create the Project record inline
   newProjectName: z.string().optional(),
 });
+
+// Total contract value defaults to MRR x months when not entered explicitly.
+function deriveValues(d: {
+  estMrr?: string;
+  estMonths?: string;
+  estValue?: string;
+}) {
+  const mrr = d.estMrr ? parseFloat(d.estMrr) : null;
+  const months = d.estMonths ? parseInt(d.estMonths) : null;
+  const explicitTotal = d.estValue ? parseFloat(d.estValue) : null;
+  const total =
+    explicitTotal ??
+    (mrr !== null && months !== null
+      ? Math.round(mrr * months * 100) / 100
+      : null);
+  return {
+    estMrr: mrr !== null && !isNaN(mrr) ? mrr : null,
+    estMonths: months !== null && !isNaN(months) ? months : null,
+    estValue: total !== null && !isNaN(total) ? total : null,
+  };
+}
 
 export async function createLead(formData: FormData): Promise<ActionResult> {
   const session = await auth();
@@ -51,6 +74,7 @@ export async function createLead(formData: FormData): Promise<ActionResult> {
     }
   }
 
+  const values = deriveValues(d);
   const lead = await prisma.lead.create({
     data: {
       title: d.title,
@@ -58,7 +82,9 @@ export async function createLead(formData: FormData): Promise<ActionResult> {
       companyId: d.companyId || undefined,
       contactId: d.contactId || undefined,
       projectId,
-      estValue: d.estValue ? parseFloat(d.estValue) : undefined,
+      estMrr: values.estMrr ?? undefined,
+      estMonths: values.estMonths ?? undefined,
+      estValue: values.estValue ?? undefined,
       source: d.source || undefined,
       expectedClose: d.expectedClose ? new Date(d.expectedClose) : undefined,
       ownerId: session.user.id,
@@ -82,6 +108,7 @@ export async function updateLead(
   }
   const d = parsed.data;
 
+  const values = deriveValues(d);
   await prisma.lead.update({
     where: { id },
     data: {
@@ -90,7 +117,9 @@ export async function updateLead(
       companyId: d.companyId || null,
       contactId: d.contactId || null,
       projectId: d.projectId || null,
-      estValue: d.estValue ? parseFloat(d.estValue) : null,
+      estMrr: values.estMrr,
+      estMonths: values.estMonths,
+      estValue: values.estValue,
       source: d.source || null,
       expectedClose: d.expectedClose ? new Date(d.expectedClose) : null,
     },

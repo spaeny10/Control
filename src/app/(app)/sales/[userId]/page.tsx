@@ -111,6 +111,10 @@ export default async function RepDetailPage({
     (s, l) => s + (l.estValue ? Number(l.estValue) : 0),
     0
   );
+  const pipelineMrr = leads.reduce(
+    (s, l) => s + (l.estMrr ? Number(l.estMrr) : 0),
+    0
+  );
   const overdueCount = openActivities.filter((a) => a.dueDate < now).length;
 
   const toView = (a: (typeof openActivities)[number]): ActivityView => {
@@ -135,9 +139,9 @@ export default async function RepDetailPage({
       sub: `${formatCurrency((activeMrr * rate) / 100)} commission at ${rate}%`,
     },
     {
-      label: "Open pipeline",
-      value: formatCurrency(pipeline),
-      sub: `${leads.length} open lead${leads.length === 1 ? "" : "s"}`,
+      label: "Pipeline MRR",
+      value: `${formatCurrency(pipelineMrr)}/mo`,
+      sub: `${formatCurrency(pipeline)} total · ${leads.length} lead${leads.length === 1 ? "" : "s"}`,
     },
     {
       label: "Open activities",
@@ -272,7 +276,8 @@ export default async function RepDetailPage({
                 <TableHead>Lead</TableHead>
                 <TableHead>Company</TableHead>
                 <TableHead>Stage</TableHead>
-                <TableHead className="text-right">Est. value</TableHead>
+                <TableHead className="text-right">Est. MRR</TableHead>
+                <TableHead className="text-right">Total value</TableHead>
                 <TableHead>Expected close</TableHead>
               </TableRow>
             </TableHeader>
@@ -280,7 +285,7 @@ export default async function RepDetailPage({
               {leads.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={6}
                     className="py-6 text-center text-muted-foreground"
                   >
                     No open leads owned by {user.name}.
@@ -305,7 +310,10 @@ export default async function RepDetailPage({
                       {l.stage.replace("_", " ")}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-medium">
+                    {l.estMrr ? `${formatCurrency(Number(l.estMrr))}/mo` : "—"}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
                     {l.estValue ? formatCurrency(Number(l.estValue)) : "—"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">

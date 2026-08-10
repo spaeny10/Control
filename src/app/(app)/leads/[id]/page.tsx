@@ -80,7 +80,21 @@ export default async function LeadDetailPage({
             <CardContent>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
                 <div>
-                  <dt className="text-muted-foreground">Est. value</dt>
+                  <dt className="text-muted-foreground">Est. MRR</dt>
+                  <dd className="font-medium">
+                    {lead.estMrr
+                      ? `${formatCurrency(Number(lead.estMrr))}/mo`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Est. length</dt>
+                  <dd className="font-medium">
+                    {lead.estMonths ? `${lead.estMonths} months` : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Total value</dt>
                   <dd className="font-medium">
                     {formatCurrency(lead.estValue ? Number(lead.estValue) : null)}
                   </dd>

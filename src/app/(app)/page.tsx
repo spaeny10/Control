@@ -112,9 +112,9 @@ export default async function DashboardPage({
       tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
-      label: "Pipeline value",
-      value: formatCurrency(stats.pipelineValue),
-      sub: "open leads",
+      label: "Pipeline MRR",
+      value: `${formatCurrency(stats.pipelineMrr)}/mo`,
+      sub: `${formatCurrency(stats.pipelineValue)} total · ${stats.openLeadCount} leads`,
       icon: Target,
       tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },

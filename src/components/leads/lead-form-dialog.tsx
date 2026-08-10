@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createLead } from "@/lib/actions/lead-actions";
 import { Button } from "@/components/ui/button";
@@ -36,8 +36,24 @@ export function LeadFormDialog({
     "NEW_COMPANY"
   );
   const [companyId, setCompanyId] = useState<string>("");
+  const [estMrr, setEstMrr] = useState("");
+  const [estMonths, setEstMonths] = useState("");
+  const [estValue, setEstValue] = useState("");
+  // Once the user types a total we stop auto-filling it from MRR x months.
+  const [totalEdited, setTotalEdited] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  const computedTotal =
+    estMrr && estMonths
+      ? Math.round(parseFloat(estMrr) * parseInt(estMonths) * 100) / 100
+      : null;
+
+  useEffect(() => {
+    if (!totalEdited) {
+      setEstValue(computedTotal !== null ? String(computedTotal) : "");
+    }
+  }, [computedTotal, totalEdited]);
 
   const companyContacts = useMemo(
     () => contacts.filter((c) => c.companyId === companyId),
@@ -162,15 +178,53 @@ export function LeadFormDialog({
 
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
-              <Label htmlFor="estValue">Est. value ($)</Label>
+              <Label htmlFor="estMrr">Est. MRR ($/mo)</Label>
+              <Input
+                id="estMrr"
+                name="estMrr"
+                type="number"
+                min="0"
+                step="0.01"
+                value={estMrr}
+                onChange={(e) => setEstMrr(e.target.value)}
+                placeholder="3900"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="estMonths">Est. months</Label>
+              <Input
+                id="estMonths"
+                name="estMonths"
+                type="number"
+                min="1"
+                value={estMonths}
+                onChange={(e) => setEstMonths(e.target.value)}
+                placeholder="7"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="estValue">Total value ($)</Label>
               <Input
                 id="estValue"
                 name="estValue"
                 type="number"
                 min="0"
                 step="0.01"
+                value={estValue}
+                onChange={(e) => {
+                  setEstValue(e.target.value);
+                  setTotalEdited(true);
+                }}
+                placeholder="auto"
               />
+              {!totalEdited && computedTotal !== null && (
+                <p className="text-xs text-muted-foreground">
+                  auto: MRR × months
+                </p>
+              )}
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="source">Source</Label>
               <Input id="source" name="source" placeholder="Referral" />

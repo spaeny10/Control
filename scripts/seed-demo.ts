@@ -349,11 +349,18 @@ async function main() {
     for (let i = 0; i < n; i++) {
       const company = pick(companies);
       const [city] = pick(CITIES);
+      // Deal size = units x per-unit rate over an expected rental length.
+      const units = int(1, 4);
+      const perUnit = pick([1850, 1950, 1950, 2100]);
+      const estMrr = units * perUnit;
+      const estMonths = pick([3, 4, 6, 6, 7, 9, 12]);
       leadData.push({
         title: `${company.name} — ${city} ${pick(PROJECT_KINDS)}`,
         type: rand() < 0.6 ? "NEW_PROJECT" : "NEW_COMPANY",
         stage: pick([...STAGES]),
-        estValue: int(4, 60) * 1000,
+        estMrr,
+        estMonths,
+        estValue: estMrr * estMonths,
         source: pick(SOURCES),
         companyId: company.id,
         ownerId: sellerId,

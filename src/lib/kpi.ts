@@ -42,7 +42,7 @@ export async function getDashboardData(months: number = 6) {
     prisma.trailer.findMany({ select: { status: true } }),
     prisma.lead.findMany({
       where: { stage: { notIn: ["WON", "LOST"] } },
-      select: { estValue: true },
+      select: { estValue: true, estMrr: true },
     }),
     prisma.lead.count({ where: { stage: "WON" } }),
     prisma.lead.count({ where: { stage: "LOST" } }),
@@ -166,6 +166,11 @@ export async function getDashboardData(months: number = 6) {
         (sum, l) => sum + (l.estValue ? Number(l.estValue) : 0),
         0
       ),
+      pipelineMrr: openLeads.reduce(
+        (sum, l) => sum + (l.estMrr ? Number(l.estMrr) : 0),
+        0
+      ),
+      openLeadCount: openLeads.length,
       winRate:
         wonCount + lostCount > 0
           ? Math.round((wonCount / (wonCount + lostCount)) * 100)
