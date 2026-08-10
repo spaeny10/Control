@@ -16,14 +16,29 @@ import type { Prisma } from "@prisma/client";
 
 export const metadata = { title: "Leads" };
 
-const SORTABLE: Record<SortKey, keyof Prisma.LeadOrderByWithRelationInput> = {
-  title: "title",
-  stage: "stage",
-  mrr: "estMrr",
-  value: "estValue",
-  close: "expectedClose",
-  created: "createdAt",
+// Prisma only accepts the { sort, nulls } object form on nullable columns —
+// non-nullable ones must use a plain "asc"/"desc".
+const SORTABLE: Record<
+  SortKey,
+  { field: keyof Prisma.LeadOrderByWithRelationInput; nullable: boolean }
+> = {
+  title: { field: "title", nullable: false },
+  stage: { field: "stage", nullable: false },
+  mrr: { field: "estMrr", nullable: true },
+  value: { field: "estValue", nullable: true },
+  close: { field: "expectedClose", nullable: true },
+  created: { field: "createdAt", nullable: false },
 };
+
+function leadOrderBy(
+  key: SortKey,
+  dir: "asc" | "desc"
+): Prisma.LeadOrderByWithRelationInput {
+  const { field, nullable } = SORTABLE[key];
+  return {
+    [field]: nullable ? { sort: dir, nulls: "last" } : dir,
+  } as Prisma.LeadOrderByWithRelationInput;
+}
 
 const STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_SENT", "WON", "LOST"];
 
@@ -79,9 +94,7 @@ export default async function LeadsPage({
   const [leads, companies, contacts, owners] = await Promise.all([
     prisma.lead.findMany({
       where,
-      orderBy: isList
-        ? { [SORTABLE[sortKey]]: { sort: sortDir, nulls: "last" } }
-        : { createdAt: "desc" },
+      orderBy: isList ? leadOrderBy(sortKey, sortDir) : { createdAt: "desc" },
       include: {
         company: { select: { name: true } },
         contact: { select: { firstName: true, lastName: true } },
