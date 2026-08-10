@@ -49,9 +49,13 @@ enum QuoteStatus {
   EXPIRED
 }
 
-enum LineItemKind {
-  RECURRING_MONTHLY
+// Billing cadence for products, quote lines, and subscriptions.
+enum BillingCycle {
   ONE_TIME
+  DAILY
+  WEEKLY
+  EVERY_28_DAYS
+  MONTHLY
 }
 
 enum SubscriptionStatus {
@@ -162,17 +166,18 @@ model Company {
   @@index([parentCompanyId])
 }
 
-// Branch/company-specific price for a catalog product (e.g. negotiated rate).
-// Quote builder uses this over the catalog default for that company.
+// Branch/company-specific negotiated rate for a catalog product at a given
+// billing cycle. Quote builder uses this over the catalog default.
 model CompanyPrice {
-  id            String      @id @default(cuid())
+  id            String       @id @default(cuid())
   companyId     String
-  company       Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company       Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   planProductId String
-  planProduct   PlanProduct @relation(fields: [planProductId], references: [id], onDelete: Cascade)
-  unitPrice     Decimal     @db.Decimal(12, 2)
+  planProduct   PlanProduct  @relation(fields: [planProductId], references: [id], onDelete: Cascade)
+  cycle         BillingCycle @default(MONTHLY)
+  unitPrice     Decimal      @db.Decimal(12, 2)
 
-  @@unique([companyId, planProductId])
+  @@unique([companyId, planProductId, cycle])
 }
 
 model Contact {
@@ -375,7 +380,7 @@ model QuoteLineItem {
   id            String       @id @default(cuid())
   quoteId       String
   quote         Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  kind          LineItemKind
+  cycle         BillingCycle
   description   String
   quantity      Int          @default(1)
   unitPrice     Decimal      @db.Decimal(12, 2)
@@ -386,21 +391,30 @@ model QuoteLineItem {
   @@index([quoteId])
 }
 
-// Reusable price catalog, mapped to Stripe Prices.
+// Reusable catalog product. Prices live per billing cycle in ProductPrice —
+// a trailer can have a daily, weekly, 28-day, and monthly rate at once.
 model PlanProduct {
   id            String       @id @default(cuid())
   name          String
-  kind          LineItemKind
-  unitPrice     Decimal      @db.Decimal(12, 2)
   description   String?
   isActive      Boolean      @default(true)
   stripeProductId String?
-  stripePriceId String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  prices         ProductPrice[]
   quoteLineItems QuoteLineItem[]
   companyPrices  CompanyPrice[]
+}
+
+model ProductPrice {
+  id            String       @id @default(cuid())
+  planProductId String
+  planProduct   PlanProduct  @relation(fields: [planProductId], references: [id], onDelete: Cascade)
+  cycle         BillingCycle
+  unitPrice     Decimal      @db.Decimal(12, 2)
+
+  @@unique([planProductId, cycle])
 }
 
 // ---------- Billing ----------
@@ -412,7 +426,12 @@ model Subscription {
   endedAt              DateTime?
   endReason            SubscriptionEndReason?
   endNotes             String?
-  // Monthly recurring revenue for this subscription (sum of recurring items)
+  // Billing cadence and the amount charged per cycle. All recurring items on
+  // one subscription share a cycle (Stripe constraint + operational sanity).
+  billingCycle         BillingCycle           @default(MONTHLY)
+  cycleAmount          Decimal                @default(0) @db.Decimal(12, 2)
+  // Normalized monthly recurring value (cycleAmount x cycles-per-month) so
+  // MRR, dashboards, and commissions stay comparable across cycles.
   mrr                  Decimal                @default(0) @db.Decimal(12, 2)
   stripeSubscriptionId String?                @unique
   companyId            String

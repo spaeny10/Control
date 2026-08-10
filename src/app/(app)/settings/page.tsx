@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/format";
+import { CYCLE_SUFFIX } from "@/lib/cycles";
 
 export const metadata = { title: "Settings" };
 
@@ -34,6 +35,7 @@ export default async function SettingsPage({
       : Promise.resolve([]),
     prisma.planProduct.findMany({
       orderBy: [{ isActive: "desc" }, { name: "asc" }],
+      include: { prices: { orderBy: { cycle: "asc" } } },
     }),
     isAdmin
       ? prisma.salesTeam.findMany({
@@ -176,15 +178,26 @@ export default async function SettingsPage({
                         {p.description ?? ""}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       {!p.isActive && <Badge variant="outline">Archived</Badge>}
-                      <Badge variant="secondary">
-                        {formatCurrency(Number(p.unitPrice))}
-                        {p.kind === "RECURRING_MONTHLY" ? "/mo" : ""}
-                      </Badge>
+                      {p.prices.map((price) => (
+                        <Badge key={price.id} variant="secondary">
+                          {formatCurrency(Number(price.unitPrice))}
+                          {CYCLE_SUFFIX[price.cycle]}
+                        </Badge>
+                      ))}
                       {isAdmin && (
                         <ProductFormDialog
-                          product={{ ...p, unitPrice: Number(p.unitPrice) }}
+                          product={{
+                            id: p.id,
+                            name: p.name,
+                            description: p.description,
+                            isActive: p.isActive,
+                            prices: p.prices.map((price) => ({
+                              cycle: price.cycle,
+                              unitPrice: Number(price.unitPrice),
+                            })),
+                          }}
                         />
                       )}
                     </div>

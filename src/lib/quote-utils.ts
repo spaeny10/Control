@@ -1,6 +1,8 @@
 // Shared helpers for loading quote-builder options and computing totals.
 import { prisma } from "@/lib/prisma";
 import { fullName } from "@/lib/format";
+import { toMonthly, isRecurring } from "@/lib/cycles";
+import type { BillingCycle } from "@prisma/client";
 
 export async function getQuoteBuilderOptions() {
   const [companies, contacts, projects, leads, catalog, overrides] =
@@ -32,16 +34,16 @@ export async function getQuoteBuilderOptions() {
     prisma.planProduct.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
+      include: { prices: { orderBy: { cycle: "asc" } } },
     }),
     prisma.companyPrice.findMany(),
   ]);
 
-  // { companyId: { planProductId: negotiatedPrice } }
+  // { companyId: { "planProductId:cycle": negotiatedPrice } }
   const priceOverrides: Record<string, Record<string, number>> = {};
   for (const o of overrides) {
-    (priceOverrides[o.companyId] ??= {})[o.planProductId] = Number(
-      o.unitPrice
-    );
+    (priceOverrides[o.companyId] ??= {})[`${o.planProductId}:${o.cycle}`] =
+      Number(o.unitPrice);
   }
 
   return {
@@ -62,22 +64,49 @@ export async function getQuoteBuilderOptions() {
     catalog: catalog.map((p) => ({
       id: p.id,
       name: p.name,
-      kind: p.kind,
-      unitPrice: Number(p.unitPrice),
       description: p.description,
+      prices: p.prices.map((price) => ({
+        cycle: price.cycle,
+        unitPrice: Number(price.unitPrice),
+      })),
     })),
     priceOverrides,
   };
 }
 
+export type QuoteTotals = {
+  // Per recurring cycle, e.g. { WEEKLY: 900 }
+  recurring: Partial<Record<BillingCycle, number>>;
+  oneTime: number;
+  // Normalized monthly value of all recurring items.
+  monthlyEquivalent: number;
+  // Recurring first period + one-time charges.
+  firstInvoice: number;
+};
+
 export function quoteTotals(
-  lineItems: { kind: string; quantity: number; unitPrice: unknown }[]
-) {
-  const monthly = lineItems
-    .filter((i) => i.kind === "RECURRING_MONTHLY")
-    .reduce((sum, i) => sum + i.quantity * Number(i.unitPrice), 0);
-  const oneTime = lineItems
-    .filter((i) => i.kind === "ONE_TIME")
-    .reduce((sum, i) => sum + i.quantity * Number(i.unitPrice), 0);
-  return { monthly, oneTime, firstInvoice: monthly + oneTime };
+  lineItems: { cycle: BillingCycle; quantity: number; unitPrice: unknown }[]
+): QuoteTotals {
+  const recurring: Partial<Record<BillingCycle, number>> = {};
+  let oneTime = 0;
+  let monthlyEquivalent = 0;
+  let recurringFirstPeriod = 0;
+
+  for (const item of lineItems) {
+    const amount = item.quantity * Number(item.unitPrice);
+    if (isRecurring(item.cycle)) {
+      recurring[item.cycle] = (recurring[item.cycle] ?? 0) + amount;
+      monthlyEquivalent += toMonthly(amount, item.cycle);
+      recurringFirstPeriod += amount;
+    } else {
+      oneTime += amount;
+    }
+  }
+
+  return {
+    recurring,
+    oneTime,
+    monthlyEquivalent,
+    firstInvoice: recurringFirstPeriod + oneTime,
+  };
 }

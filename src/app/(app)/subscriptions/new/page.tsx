@@ -43,7 +43,7 @@ export default async function NewSubscriptionPage({
 
   const totals = quoteTotals(quote.lineItems);
   const suggestedUnits = quote.lineItems
-    .filter((i) => i.kind === "RECURRING_MONTHLY")
+    .filter((i) => i.cycle !== "ONE_TIME")
     .reduce((sum, i) => sum + i.quantity, 0);
 
   return (

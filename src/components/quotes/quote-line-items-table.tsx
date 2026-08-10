@@ -8,10 +8,13 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/format";
+import { CYCLE_LABELS, CYCLE_SUFFIX } from "@/lib/cycles";
+import type { QuoteTotals } from "@/lib/quote-utils";
+import type { BillingCycle } from "@prisma/client";
 
 type LineItem = {
   id: string;
-  kind: string;
+  cycle: BillingCycle;
   description: string;
   quantity: number;
   unitPrice: unknown;
@@ -22,15 +25,17 @@ export function QuoteLineItemsTable({
   totals,
 }: {
   lineItems: LineItem[];
-  totals: { monthly: number; oneTime: number; firstInvoice: number };
+  totals: QuoteTotals;
 }) {
+  const recurringCycles = Object.keys(totals.recurring) as BillingCycle[];
+
   return (
     <div>
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead>Description</TableHead>
-            <TableHead>Type</TableHead>
+            <TableHead>Billing</TableHead>
             <TableHead className="text-right">Qty</TableHead>
             <TableHead className="text-right">Unit price</TableHead>
             <TableHead className="text-right">Amount</TableHead>
@@ -41,9 +46,7 @@ export function QuoteLineItemsTable({
             <TableRow key={item.id}>
               <TableCell className="font-medium">{item.description}</TableCell>
               <TableCell>
-                <Badge variant="outline">
-                  {item.kind === "RECURRING_MONTHLY" ? "Monthly" : "One-time"}
-                </Badge>
+                <Badge variant="outline">{CYCLE_LABELS[item.cycle]}</Badge>
               </TableCell>
               <TableCell className="text-right">{item.quantity}</TableCell>
               <TableCell className="text-right">
@@ -51,8 +54,10 @@ export function QuoteLineItemsTable({
               </TableCell>
               <TableCell className="text-right font-medium">
                 {formatCurrency(item.quantity * Number(item.unitPrice))}
-                {item.kind === "RECURRING_MONTHLY" && (
-                  <span className="text-muted-foreground">/mo</span>
+                {CYCLE_SUFFIX[item.cycle] && (
+                  <span className="text-muted-foreground">
+                    {CYCLE_SUFFIX[item.cycle]}
+                  </span>
                 )}
               </TableCell>
             </TableRow>
@@ -60,14 +65,17 @@ export function QuoteLineItemsTable({
         </TableBody>
       </Table>
       <div className="flex flex-col items-end gap-1 border-t p-4 text-sm">
-        {totals.monthly > 0 && (
-          <p>
-            <span className="text-muted-foreground">Monthly recurring: </span>
+        {recurringCycles.map((cycle) => (
+          <p key={cycle}>
+            <span className="text-muted-foreground">
+              {CYCLE_LABELS[cycle]} recurring:{" "}
+            </span>
             <span className="font-semibold">
-              {formatCurrency(totals.monthly)}/mo
+              {formatCurrency(totals.recurring[cycle] ?? 0)}
+              {CYCLE_SUFFIX[cycle]}
             </span>
           </p>
-        )}
+        ))}
         {totals.oneTime > 0 && (
           <p>
             <span className="text-muted-foreground">One-time charges: </span>
@@ -76,6 +84,12 @@ export function QuoteLineItemsTable({
             </span>
           </p>
         )}
+        {totals.monthlyEquivalent > 0 &&
+          recurringCycles.some((c) => c !== "MONTHLY") && (
+            <p className="text-xs text-muted-foreground">
+              ≈ {formatCurrency(totals.monthlyEquivalent)}/mo equivalent
+            </p>
+          )}
         <p className="text-base">
           <span className="text-muted-foreground">First invoice total: </span>
           <span className="font-bold">

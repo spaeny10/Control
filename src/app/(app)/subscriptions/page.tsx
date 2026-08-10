@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { statusBadgeVariant } from "@/lib/badges";
 
 export const metadata = { title: "Subscriptions" };
@@ -60,7 +61,7 @@ export default async function SubscriptionsPage() {
                 <TableHead>Company</TableHead>
                 <TableHead>Project</TableHead>
                 <TableHead>Units on site</TableHead>
-                <TableHead className="text-right">MRR</TableHead>
+                <TableHead className="text-right">Billing</TableHead>
                 <TableHead>Started</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -107,7 +108,13 @@ export default async function SubscriptionsPage() {
                       : "—"}
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    {formatCurrency(Number(s.mrr))}/mo
+                    {formatCurrency(Number(s.cycleAmount))}
+                    {CYCLE_SUFFIX[s.billingCycle]}
+                    {s.billingCycle !== "MONTHLY" && (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        ≈ {formatCurrency(Number(s.mrr))}/mo
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {formatDate(s.startDate)}

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { BillingCycle } from "@prisma/client";
 
 const companySchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -96,6 +97,7 @@ export async function updateCompany(
 export async function setCompanyPrice(
   companyId: string,
   planProductId: string,
+  cycle: BillingCycle,
   unitPrice: number
 ): Promise<ActionResult> {
   const session = await auth();
@@ -104,8 +106,10 @@ export async function setCompanyPrice(
   if (!(unitPrice >= 0)) return { ok: false, error: "Invalid price" };
 
   await prisma.companyPrice.upsert({
-    where: { companyId_planProductId: { companyId, planProductId } },
-    create: { companyId, planProductId, unitPrice },
+    where: {
+      companyId_planProductId_cycle: { companyId, planProductId, cycle },
+    },
+    create: { companyId, planProductId, cycle, unitPrice },
     update: { unitPrice },
   });
   revalidatePath(`/companies/${companyId}`);
@@ -114,14 +118,15 @@ export async function setCompanyPrice(
 
 export async function removeCompanyPrice(
   companyId: string,
-  planProductId: string
+  planProductId: string,
+  cycle: BillingCycle
 ): Promise<ActionResult> {
   const session = await auth();
   if (session?.user?.role !== "ADMIN")
     return { ok: false, error: "Admin only" };
 
   await prisma.companyPrice.deleteMany({
-    where: { companyId, planProductId },
+    where: { companyId, planProductId, cycle },
   });
   revalidatePath(`/companies/${companyId}`);
   return { ok: true };

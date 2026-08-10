@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { statusBadgeVariant } from "@/lib/badges";
 import { ExternalLink } from "lucide-react";
 
@@ -96,7 +97,11 @@ export default async function SubscriptionDetailPage({
                 {" · "}
               </>
             )}
-            {formatCurrency(Number(subscription.mrr))}/mo · started{" "}
+            {formatCurrency(Number(subscription.cycleAmount))}
+            {CYCLE_SUFFIX[subscription.billingCycle]}
+            {subscription.billingCycle !== "MONTHLY" &&
+              ` (≈ ${formatCurrency(Number(subscription.mrr))}/mo)`}
+            {" · started "}
             {formatDate(subscription.startDate)}
             {subscription.quote && (
               <>

@@ -5,6 +5,7 @@ import {
   createProduct,
   updateProduct,
   setProductActive,
+  type ProductInput,
 } from "@/lib/actions/catalog-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,39 +14,66 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { CYCLES, CYCLE_LABELS } from "@/lib/cycles";
 import { toast } from "sonner";
 import { Plus, Pencil } from "lucide-react";
+import type { BillingCycle } from "@prisma/client";
 
 type ProductValues = {
   id?: string;
   name?: string;
-  kind?: "RECURRING_MONTHLY" | "ONE_TIME";
-  unitPrice?: number;
   description?: string | null;
   isActive?: boolean;
+  prices?: { cycle: BillingCycle; unitPrice: number }[];
 };
 
 export function ProductFormDialog({ product }: { product?: ProductValues }) {
   const [open, setOpen] = useState(false);
+  const [name, setName] = useState(product?.name ?? "");
+  const [description, setDescription] = useState(product?.description ?? "");
+  const [prices, setPrices] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const p of product?.prices ?? []) {
+      initial[p.cycle] = String(p.unitPrice);
+    }
+    return initial;
+  });
   const [isPending, startTransition] = useTransition();
   const isEdit = !!product?.id;
 
-  function handleSubmit(formData: FormData) {
+  function submit() {
+    const priceList = CYCLES.filter(
+      (c) => prices[c] !== undefined && prices[c] !== ""
+    ).map((c) => ({ cycle: c, unitPrice: parseFloat(prices[c]) }));
+
+    if (!name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    if (priceList.length === 0) {
+      toast.error("Set at least one price");
+      return;
+    }
+    if (priceList.some((p) => isNaN(p.unitPrice) || p.unitPrice < 0)) {
+      toast.error("Prices must be valid numbers");
+      return;
+    }
+
+    const payload: ProductInput = {
+      name: name.trim(),
+      description: description || null,
+      prices: priceList,
+    };
+
     startTransition(async () => {
       const result = isEdit
-        ? await updateProduct(product!.id!, formData)
-        : await createProduct(formData);
+        ? await updateProduct(product!.id!, payload)
+        : await createProduct(payload);
       if (result.ok) {
         toast.success(isEdit ? "Product updated" : "Product added");
         setOpen(false);
@@ -73,51 +101,50 @@ export function ProductFormDialog({ product }: { product?: ProductValues }) {
           <DialogTitle>
             {isEdit ? "Edit catalog product" : "Add catalog product"}
           </DialogTitle>
+          <DialogDescription>
+            Set a price for each billing cycle you offer — leave the rest
+            blank.
+          </DialogDescription>
         </DialogHeader>
-        <form action={handleSubmit} className="space-y-4">
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Name *</Label>
             <Input
               id="name"
-              name="name"
-              required
-              placeholder="BIGVIEW Trailer — Monthly"
-              defaultValue={product?.name ?? ""}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="BIGVIEW Trailer Rental"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Type</Label>
-              <Select name="kind" defaultValue={product?.kind ?? "RECURRING_MONTHLY"}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="RECURRING_MONTHLY">Monthly recurring</SelectItem>
-                  <SelectItem value="ONE_TIME">One-time</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="unitPrice">Unit price ($) *</Label>
-              <Input
-                id="unitPrice"
-                name="unitPrice"
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                defaultValue={product?.unitPrice ?? ""}
-              />
+          <div className="space-y-2">
+            <Label>Prices</Label>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {CYCLES.map((cycle) => (
+                <div key={cycle} className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    {CYCLE_LABELS[cycle]}
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="—"
+                    value={prices[cycle] ?? ""}
+                    onChange={(e) =>
+                      setPrices((p) => ({ ...p, [cycle]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="description">Description</Label>
             <Textarea
               id="description"
-              name="description"
               rows={2}
-              defaultValue={product?.description ?? ""}
+              value={description ?? ""}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </div>
           <div className="flex items-center justify-between gap-2">
@@ -151,12 +178,12 @@ export function ProductFormDialog({ product }: { product?: ProductValues }) {
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isPending}>
+              <Button onClick={submit} disabled={isPending}>
                 {isPending ? "Saving..." : isEdit ? "Save" : "Add"}
               </Button>
             </div>
           </div>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

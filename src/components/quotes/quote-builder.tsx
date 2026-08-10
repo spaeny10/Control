@@ -25,20 +25,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
+import {
+  CYCLES,
+  CYCLE_LABELS,
+  CYCLE_SUFFIX,
+  isRecurring,
+  toMonthly,
+} from "@/lib/cycles";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
+import type { BillingCycle } from "@prisma/client";
 
 export type CatalogProduct = {
   id: string;
   name: string;
-  kind: "RECURRING_MONTHLY" | "ONE_TIME";
-  unitPrice: number;
   description: string | null;
+  prices: { cycle: BillingCycle; unitPrice: number }[];
 };
 
 export type BuilderLineItem = {
   key: string;
-  kind: "RECURRING_MONTHLY" | "ONE_TIME";
+  cycle: BillingCycle;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -65,7 +72,7 @@ export function QuoteBuilder({
   projects: ProjectOption[];
   leads: LeadOption[];
   catalog: CatalogProduct[];
-  // { companyId: { planProductId: negotiatedPrice } }
+  // { companyId: { "planProductId:cycle": negotiatedPrice } }
   priceOverrides?: Record<string, Record<string, number>>;
   initial?: {
     companyId: string;
@@ -103,43 +110,73 @@ export function QuoteBuilder({
     [leads, companyId]
   );
 
-  const monthlyTotal = items
-    .filter((i) => i.kind === "RECURRING_MONTHLY")
-    .reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
-  const oneTimeTotal = items
-    .filter((i) => i.kind === "ONE_TIME")
-    .reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
+  // Every offered product x cycle combination for the picker.
+  const catalogEntries = useMemo(
+    () =>
+      catalog.flatMap((p) =>
+        p.prices.map((price) => ({
+          value: `${p.id}:${price.cycle}`,
+          product: p,
+          cycle: price.cycle,
+          listPrice: price.unitPrice,
+        }))
+      ),
+    [catalog]
+  );
 
   // Negotiated per-company price wins over the catalog default.
-  function effectivePrice(product: CatalogProduct) {
-    return priceOverrides[companyId]?.[product.id] ?? product.unitPrice;
+  function effectivePrice(
+    productId: string,
+    cycle: BillingCycle,
+    listPrice: number
+  ) {
+    return priceOverrides[companyId]?.[`${productId}:${cycle}`] ?? listPrice;
   }
 
-  function addFromCatalog(productId: string) {
-    const product = catalog.find((p) => p.id === productId);
-    if (!product) return;
+  const totals = useMemo(() => {
+    const recurring: Partial<Record<BillingCycle, number>> = {};
+    let oneTime = 0;
+    let monthlyEquivalent = 0;
+    let recurringFirstPeriod = 0;
+    for (const item of items) {
+      const amount = item.quantity * item.unitPrice;
+      if (isRecurring(item.cycle)) {
+        recurring[item.cycle] = (recurring[item.cycle] ?? 0) + amount;
+        monthlyEquivalent += toMonthly(amount, item.cycle);
+        recurringFirstPeriod += amount;
+      } else {
+        oneTime += amount;
+      }
+    }
+    return {
+      recurring,
+      oneTime,
+      monthlyEquivalent,
+      firstInvoice: recurringFirstPeriod + oneTime,
+    };
+  }, [items]);
+
+  const recurringCyclesUsed = Object.keys(totals.recurring) as BillingCycle[];
+  const mixedCycles = recurringCyclesUsed.length > 1;
+
+  function addFromCatalog(entryValue: string) {
+    const entry = catalogEntries.find((e) => e.value === entryValue);
+    if (!entry) return;
     setItems((prev) => [
       ...prev,
       {
         key: `${Date.now()}-${prev.length}`,
-        kind: product.kind,
-        description: product.name,
+        cycle: entry.cycle,
+        description: entry.product.name,
         quantity: 1,
-        unitPrice: effectivePrice(product),
-        planProductId: product.id,
+        unitPrice: effectivePrice(
+          entry.product.id,
+          entry.cycle,
+          entry.listPrice
+        ),
+        planProductId: entry.product.id,
       },
     ]);
-  }
-
-  function selectCompany(id: string) {
-    setCompanyId(id);
-    // Default to the branch's AP/billing contact if none picked yet.
-    if (!contactId) {
-      const billing = contacts.find(
-        (c) => c.companyId === id && c.isBillingContact
-      );
-      if (billing) setContactId(billing.id);
-    }
   }
 
   function addBlank() {
@@ -147,7 +184,7 @@ export function QuoteBuilder({
       ...prev,
       {
         key: `${Date.now()}-${prev.length}`,
-        kind: "ONE_TIME",
+        cycle: "ONE_TIME",
         description: "",
         quantity: 1,
         unitPrice: 0,
@@ -162,6 +199,16 @@ export function QuoteBuilder({
     );
   }
 
+  function selectCompany(id: string) {
+    setCompanyId(id);
+    if (!contactId) {
+      const billing = contacts.find(
+        (c) => c.companyId === id && c.isBillingContact
+      );
+      if (billing) setContactId(billing.id);
+    }
+  }
+
   function submit() {
     if (!companyId) {
       toast.error("Select a company");
@@ -169,6 +216,12 @@ export function QuoteBuilder({
     }
     if (items.length === 0) {
       toast.error("Add at least one line item");
+      return;
+    }
+    if (mixedCycles) {
+      toast.error(
+        "All recurring items must share one billing cycle — split into separate quotes for mixed cadences"
+      );
       return;
     }
     const payload: QuoteInput = {
@@ -179,7 +232,7 @@ export function QuoteBuilder({
       validUntil: validUntil || null,
       terms: terms || null,
       lineItems: items.map((i) => ({
-        kind: i.kind,
+        cycle: i.cycle,
         description: i.description,
         quantity: i.quantity,
         unitPrice: i.unitPrice,
@@ -235,6 +288,7 @@ export function QuoteBuilder({
                 {companyContacts.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name}
+                    {c.isBillingContact ? " (AP)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -295,17 +349,21 @@ export function QuoteBuilder({
           <CardTitle className="text-base">Line items</CardTitle>
           <div className="flex items-center gap-2">
             <Select value="" onValueChange={addFromCatalog}>
-              <SelectTrigger className="w-56">
+              <SelectTrigger className="w-64">
                 <SelectValue placeholder="Add from catalog..." />
               </SelectTrigger>
               <SelectContent>
-                {catalog.map((p) => {
-                  const price = effectivePrice(p);
+                {catalogEntries.map((e) => {
+                  const price = effectivePrice(
+                    e.product.id,
+                    e.cycle,
+                    e.listPrice
+                  );
                   return (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name} — {formatCurrency(price)}
-                      {p.kind === "RECURRING_MONTHLY" ? "/mo" : ""}
-                      {price !== p.unitPrice ? " (negotiated)" : ""}
+                    <SelectItem key={e.value} value={e.value}>
+                      {e.product.name} — {formatCurrency(price)}
+                      {CYCLE_SUFFIX[e.cycle]}
+                      {price !== e.listPrice ? " (negotiated)" : ""}
                     </SelectItem>
                   );
                 })}
@@ -340,25 +398,26 @@ export function QuoteBuilder({
                   onChange={(e) =>
                     patchItem(item.key, { description: e.target.value })
                   }
-                  placeholder="BIGVIEW Trailer — Monthly"
+                  placeholder="BIGVIEW Trailer Rental"
                 />
               </div>
               <div className="col-span-4 space-y-1 sm:col-span-3">
-                <Label className="text-xs">Type</Label>
+                <Label className="text-xs">Billing</Label>
                 <Select
-                  value={item.kind}
+                  value={item.cycle}
                   onValueChange={(v) =>
-                    patchItem(item.key, { kind: v as BuilderLineItem["kind"] })
+                    patchItem(item.key, { cycle: v as BillingCycle })
                   }
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="RECURRING_MONTHLY">
-                      Monthly recurring
-                    </SelectItem>
-                    <SelectItem value="ONE_TIME">One-time</SelectItem>
+                    {CYCLES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {CYCLE_LABELS[c]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -391,6 +450,9 @@ export function QuoteBuilder({
               </div>
               <div className="col-span-9 flex items-center justify-end text-sm font-medium sm:col-span-1">
                 {formatCurrency(item.quantity * item.unitPrice)}
+                <span className="text-muted-foreground">
+                  {CYCLE_SUFFIX[item.cycle]}
+                </span>
               </div>
               <div className="col-span-3 flex justify-end sm:col-span-1">
                 <Button
@@ -407,24 +469,47 @@ export function QuoteBuilder({
             </div>
           ))}
 
+          {mixedCycles && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive">
+              Recurring items use different billing cycles (
+              {recurringCyclesUsed.map((c) => CYCLE_LABELS[c]).join(", ")}).
+              Pick one cycle — a subscription bills on a single cadence.
+            </p>
+          )}
+
           {items.length > 0 && (
             <div className="flex flex-col items-end gap-1 border-t pt-3 text-sm">
-              <p>
-                <span className="text-muted-foreground">Monthly recurring: </span>
-                <span className="font-semibold">
-                  {formatCurrency(monthlyTotal)}/mo
-                </span>
-              </p>
-              <p>
-                <span className="text-muted-foreground">One-time charges: </span>
-                <span className="font-semibold">
-                  {formatCurrency(oneTimeTotal)}
-                </span>
-              </p>
+              {recurringCyclesUsed.map((cycle) => (
+                <p key={cycle}>
+                  <span className="text-muted-foreground">
+                    {CYCLE_LABELS[cycle]} recurring:{" "}
+                  </span>
+                  <span className="font-semibold">
+                    {formatCurrency(totals.recurring[cycle] ?? 0)}
+                    {CYCLE_SUFFIX[cycle]}
+                  </span>
+                </p>
+              ))}
+              {totals.oneTime > 0 && (
+                <p>
+                  <span className="text-muted-foreground">
+                    One-time charges:{" "}
+                  </span>
+                  <span className="font-semibold">
+                    {formatCurrency(totals.oneTime)}
+                  </span>
+                </p>
+              )}
+              {totals.monthlyEquivalent > 0 &&
+                recurringCyclesUsed[0] !== "MONTHLY" && (
+                  <p className="text-xs text-muted-foreground">
+                    ≈ {formatCurrency(totals.monthlyEquivalent)}/mo equivalent
+                  </p>
+                )}
               <p className="text-base">
                 <span className="text-muted-foreground">First invoice: </span>
                 <span className="font-bold">
-                  {formatCurrency(monthlyTotal + oneTimeTotal)}
+                  {formatCurrency(totals.firstInvoice)}
                 </span>
               </p>
             </div>
@@ -438,7 +523,7 @@ export function QuoteBuilder({
         </CardHeader>
         <CardContent>
           <Textarea
-            value={terms}
+            value={terms ?? ""}
             onChange={(e) => setTerms(e.target.value)}
             rows={4}
             placeholder="Rental terms, cancellation policy, site requirements..."
@@ -447,19 +532,11 @@ export function QuoteBuilder({
       </Card>
 
       <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => router.back()}
-        >
+        <Button type="button" variant="outline" onClick={() => router.back()}>
           Cancel
         </Button>
         <Button onClick={submit} disabled={isPending}>
-          {isPending
-            ? "Saving..."
-            : quoteId
-              ? "Save changes"
-              : "Create quote"}
+          {isPending ? "Saving..." : quoteId ? "Save changes" : "Create quote"}
         </Button>
       </div>
     </div>

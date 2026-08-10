@@ -18,32 +18,42 @@ async function main() {
   });
   console.log(`Admin user ready: ${admin.email} (temp password: bigview-temp-2026 — change it!)`);
 
-  // ---- Price catalog ----
+  // ---- Price catalog (per-cycle prices) ----
   const catalog = [
     {
-      name: "BIGVIEW Trailer — Monthly",
-      kind: "RECURRING_MONTHLY" as const,
-      unitPrice: 1950,
-      description: "Solar security trailer with live monitoring, per unit per month",
+      name: "BIGVIEW Trailer Rental",
+      description: "Solar security trailer with live monitoring, per unit",
+      prices: [
+        { cycle: "DAILY" as const, unitPrice: 125 },
+        { cycle: "WEEKLY" as const, unitPrice: 650 },
+        { cycle: "EVERY_28_DAYS" as const, unitPrice: 1850 },
+        { cycle: "MONTHLY" as const, unitPrice: 1950 },
+      ],
     },
     {
       name: "Delivery & Setup",
-      kind: "ONE_TIME" as const,
-      unitPrice: 350,
       description: "Delivery, positioning, and commissioning per unit",
+      prices: [{ cycle: "ONE_TIME" as const, unitPrice: 350 }],
     },
     {
       name: "Pickup & Removal",
-      kind: "ONE_TIME" as const,
-      unitPrice: 350,
       description: "End-of-project pickup per unit",
+      prices: [{ cycle: "ONE_TIME" as const, unitPrice: 350 }],
     },
   ];
   for (const item of catalog) {
     const existing = await prisma.planProduct.findFirst({
       where: { name: item.name },
     });
-    if (!existing) await prisma.planProduct.create({ data: item });
+    if (!existing) {
+      await prisma.planProduct.create({
+        data: {
+          name: item.name,
+          description: item.description,
+          prices: { create: item.prices },
+        },
+      });
+    }
   }
   console.log("Price catalog seeded.");
 

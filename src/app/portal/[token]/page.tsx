@@ -10,6 +10,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { CYCLE_SUFFIX } from "@/lib/cycles";
+import type { BillingCycle } from "@prisma/client";
 import { statusBadgeVariant } from "@/lib/badges";
 import { quoteTotals } from "@/lib/quote-utils";
 import { ExternalLink } from "lucide-react";
@@ -137,7 +139,8 @@ export default async function PortalPage({
                       </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {formatCurrency(Number(s.mrr))}/mo · since{" "}
+                      {formatCurrency(Number(s.cycleAmount))}
+                      {CYCLE_SUFFIX[s.billingCycle]} · since{" "}
                       {formatDate(s.startDate)}
                       {s.deployments.length > 0 &&
                         ` · units on site: ${s.deployments
@@ -160,6 +163,18 @@ export default async function PortalPage({
               <div className="divide-y">
                 {company.quotes.map((q) => {
                   const totals = quoteTotals(q.lineItems);
+                  const recurringParts = (
+                    Object.keys(totals.recurring) as BillingCycle[]
+                  ).map(
+                    (c) =>
+                      `${formatCurrency(totals.recurring[c] ?? 0)}${CYCLE_SUFFIX[c]}`
+                  );
+                  const parts = [
+                    ...recurringParts,
+                    ...(totals.oneTime > 0
+                      ? [`${formatCurrency(totals.oneTime)} one-time`]
+                      : []),
+                  ];
                   return (
                     <div
                       key={q.id}
@@ -168,11 +183,7 @@ export default async function PortalPage({
                       <div>
                         <p className="font-medium">{q.number}</p>
                         <p className="text-xs text-muted-foreground">
-                          {totals.monthly > 0 &&
-                            `${formatCurrency(totals.monthly)}/mo`}
-                          {totals.monthly > 0 && totals.oneTime > 0 && " + "}
-                          {totals.oneTime > 0 &&
-                            `${formatCurrency(totals.oneTime)} one-time`}
+                          {parts.join(" + ")}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">

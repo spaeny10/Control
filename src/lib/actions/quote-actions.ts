@@ -8,22 +8,36 @@ import { headers } from "next/headers";
 import type { ActionResult } from "./company-actions";
 
 const lineItemSchema = z.object({
-  kind: z.enum(["RECURRING_MONTHLY", "ONE_TIME"]),
+  cycle: z.enum(["ONE_TIME", "DAILY", "WEEKLY", "EVERY_28_DAYS", "MONTHLY"]),
   description: z.string().min(1, "Line item description required"),
   quantity: z.number().int().min(1),
   unitPrice: z.number().min(0),
   planProductId: z.string().optional().nullable(),
 });
 
-const quoteSchema = z.object({
-  companyId: z.string().min(1, "Company is required"),
-  contactId: z.string().optional().nullable(),
-  leadId: z.string().optional().nullable(),
-  projectId: z.string().optional().nullable(),
-  validUntil: z.string().optional().nullable(),
-  terms: z.string().optional().nullable(),
-  lineItems: z.array(lineItemSchema).min(1, "Add at least one line item"),
-});
+const quoteSchema = z
+  .object({
+    companyId: z.string().min(1, "Company is required"),
+    contactId: z.string().optional().nullable(),
+    leadId: z.string().optional().nullable(),
+    projectId: z.string().optional().nullable(),
+    validUntil: z.string().optional().nullable(),
+    terms: z.string().optional().nullable(),
+    lineItems: z.array(lineItemSchema).min(1, "Add at least one line item"),
+  })
+  .refine(
+    (q) => {
+      // One billing cadence per subscription: recurring lines must share a cycle.
+      const cycles = new Set(
+        q.lineItems.filter((i) => i.cycle !== "ONE_TIME").map((i) => i.cycle)
+      );
+      return cycles.size <= 1;
+    },
+    {
+      message:
+        "All recurring line items must use the same billing cycle (one-time charges can mix freely)",
+    }
+  );
 
 export type QuoteInput = z.infer<typeof quoteSchema>;
 
@@ -56,7 +70,7 @@ export async function createQuote(input: QuoteInput): Promise<ActionResult> {
       terms: d.terms || undefined,
       lineItems: {
         create: d.lineItems.map((item, i) => ({
-          kind: item.kind,
+          cycle: item.cycle,
           description: item.description,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
@@ -103,7 +117,7 @@ export async function updateQuote(
         terms: d.terms || null,
         lineItems: {
           create: d.lineItems.map((item, i) => ({
-            kind: item.kind,
+            cycle: item.cycle,
             description: item.description,
             quantity: item.quantity,
             unitPrice: item.unitPrice,

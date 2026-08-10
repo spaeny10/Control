@@ -8,27 +8,41 @@ import type { ActionResult } from "./company-actions";
 
 const productSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  kind: z.enum(["RECURRING_MONTHLY", "ONE_TIME"]),
-  unitPrice: z.string().min(1, "Price is required"),
-  description: z.string().optional(),
+  description: z.string().optional().nullable(),
+  // One entry per offered cycle; at least one price required.
+  prices: z
+    .array(
+      z.object({
+        cycle: z.enum([
+          "ONE_TIME",
+          "DAILY",
+          "WEEKLY",
+          "EVERY_28_DAYS",
+          "MONTHLY",
+        ]),
+        unitPrice: z.number().min(0),
+      })
+    )
+    .min(1, "Set at least one price"),
 });
 
+export type ProductInput = z.infer<typeof productSchema>;
+
 export async function createProduct(
-  formData: FormData
+  input: ProductInput
 ): Promise<ActionResult> {
   const session = await auth();
   if (session?.user?.role !== "ADMIN")
     return { ok: false, error: "Admin only" };
 
-  const parsed = productSchema.safeParse(Object.fromEntries(formData));
+  const parsed = productSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
 
   await prisma.planProduct.create({
     data: {
       name: parsed.data.name,
-      kind: parsed.data.kind,
-      unitPrice: parseFloat(parsed.data.unitPrice),
       description: parsed.data.description || undefined,
+      prices: { create: parsed.data.prices },
     },
   });
   revalidatePath("/settings");
@@ -37,27 +51,28 @@ export async function createProduct(
 
 export async function updateProduct(
   id: string,
-  formData: FormData
+  input: ProductInput
 ): Promise<ActionResult> {
   const session = await auth();
   if (session?.user?.role !== "ADMIN")
     return { ok: false, error: "Admin only" };
 
-  const parsed = productSchema.safeParse(Object.fromEntries(formData));
+  const parsed = productSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
 
-  // Price changes shouldn't silently reuse a stale Stripe price — clear the
-  // cached product mapping so the next conversion recreates it.
-  await prisma.planProduct.update({
-    where: { id },
-    data: {
-      name: parsed.data.name,
-      kind: parsed.data.kind,
-      unitPrice: parseFloat(parsed.data.unitPrice),
-      description: parsed.data.description || null,
-      stripePriceId: null,
-    },
-  });
+  // Replace the price set wholesale — removed cycles disappear from the
+  // picker; existing quote lines keep their captured price.
+  await prisma.$transaction([
+    prisma.productPrice.deleteMany({ where: { planProductId: id } }),
+    prisma.planProduct.update({
+      where: { id },
+      data: {
+        name: parsed.data.name,
+        description: parsed.data.description || null,
+        prices: { create: parsed.data.prices },
+      },
+    }),
+  ]);
   revalidatePath("/settings");
   return { ok: true };
 }

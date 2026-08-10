@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getStripe, toCents } from "@/lib/stripe";
+import { STRIPE_INTERVALS, toMonthly } from "@/lib/cycles";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
 import type { Prisma, SubscriptionEndReason } from "@prisma/client";
@@ -82,13 +83,25 @@ export async function convertQuoteToSubscription(input: {
   }
 
   const recurringItems = quote.lineItems.filter(
-    (i) => i.kind === "RECURRING_MONTHLY"
+    (i) => i.cycle !== "ONE_TIME"
   );
-  const oneTimeItems = quote.lineItems.filter((i) => i.kind === "ONE_TIME");
-  const mrr = recurringItems.reduce(
+  const oneTimeItems = quote.lineItems.filter((i) => i.cycle === "ONE_TIME");
+
+  // All recurring items share one cycle (enforced at quote creation).
+  const cycles = [...new Set(recurringItems.map((i) => i.cycle))];
+  if (cycles.length > 1) {
+    return {
+      ok: false,
+      error: "Quote mixes recurring billing cycles — edit it to use one cycle",
+    };
+  }
+  const billingCycle = cycles[0] ?? "MONTHLY";
+  const cycleAmount = recurringItems.reduce(
     (sum, i) => sum + i.quantity * Number(i.unitPrice),
     0
   );
+  // Normalized monthly value keeps MRR/KPIs comparable across cycles.
+  const mrr = Math.round(toMonthly(cycleAmount, billingCycle) * 100) / 100;
 
   // ---- Stripe (when configured) ----
   const stripe = getStripe();
@@ -112,6 +125,8 @@ export async function convertQuoteToSubscription(input: {
         });
       }
 
+      const stripeInterval =
+        STRIPE_INTERVALS[billingCycle as Exclude<typeof billingCycle, "ONE_TIME">];
       const recurringWithProducts = [];
       for (const item of recurringItems) {
         recurringWithProducts.push({
@@ -119,7 +134,7 @@ export async function convertQuoteToSubscription(input: {
           price_data: {
             currency: "usd",
             unit_amount: toCents(Number(item.unitPrice)),
-            recurring: { interval: "month" as const },
+            recurring: stripeInterval,
             product: await stripeProductFor(stripe, item),
           },
         });
@@ -159,6 +174,8 @@ export async function convertQuoteToSubscription(input: {
     data: {
       status: "ACTIVE",
       startDate: startDate ? new Date(startDate) : new Date(),
+      billingCycle,
+      cycleAmount,
       mrr,
       stripeSubscriptionId,
       companyId: quote.companyId,

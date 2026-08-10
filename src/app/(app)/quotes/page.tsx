@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { quoteTotals } from "@/lib/quote-utils";
+import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { Plus } from "lucide-react";
 
 export const metadata = { title: "Quotes" };
@@ -50,7 +51,7 @@ export default async function QuotesPage() {
               <TableRow>
                 <TableHead>Number</TableHead>
                 <TableHead>Company</TableHead>
-                <TableHead className="text-right">Monthly</TableHead>
+                <TableHead className="text-right">Recurring</TableHead>
                 <TableHead className="text-right">One-time</TableHead>
                 <TableHead>Valid until</TableHead>
                 <TableHead>Status</TableHead>
@@ -69,6 +70,9 @@ export default async function QuotesPage() {
               )}
               {quotes.map((q) => {
                 const totals = quoteTotals(q.lineItems);
+                const recurringCycles = Object.keys(
+                  totals.recurring
+                ) as (keyof typeof CYCLE_SUFFIX)[];
                 return (
                   <TableRow key={q.id}>
                     <TableCell>
@@ -88,8 +92,13 @@ export default async function QuotesPage() {
                       </Link>
                     </TableCell>
                     <TableCell className="text-right">
-                      {totals.monthly > 0
-                        ? `${formatCurrency(totals.monthly)}/mo`
+                      {recurringCycles.length > 0
+                        ? recurringCycles
+                            .map(
+                              (c) =>
+                                `${formatCurrency(totals.recurring[c] ?? 0)}${CYCLE_SUFFIX[c]}`
+                            )
+                            .join(" + ")
                         : "—"}
                     </TableCell>
                     <TableCell className="text-right">

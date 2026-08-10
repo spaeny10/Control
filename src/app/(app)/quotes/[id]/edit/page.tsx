@@ -43,7 +43,7 @@ export default async function EditQuotePage({
             : null,
           terms: quote.terms,
           lineItems: quote.lineItems.map((li) => ({
-            kind: li.kind,
+            cycle: li.cycle,
             description: li.description,
             quantity: li.quantity,
             unitPrice: Number(li.unitPrice),

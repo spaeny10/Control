@@ -55,6 +55,7 @@ export default async function CompanyDetailPage({
     prisma.planProduct.findMany({
       where: { isActive: true },
       orderBy: { name: "asc" },
+      include: { prices: { orderBy: { cycle: "asc" } } },
     }),
     prisma.company.findMany({
       where: { parentCompanyId: null, branches: { none: {} } },
@@ -83,18 +84,21 @@ export default async function CompanyDetailPage({
       company.branches.reduce((sum, b) => sum + b._count.projects, 0),
   };
 
-  const priceRows = products.map((p) => {
-    const override = company.priceOverrides.find(
-      (o) => o.planProductId === p.id
-    );
-    return {
-      planProductId: p.id,
-      name: p.name,
-      kind: p.kind,
-      defaultPrice: Number(p.unitPrice),
-      overridePrice: override ? Number(override.unitPrice) : null,
-    };
-  });
+  // One row per product x offered cycle.
+  const priceRows = products.flatMap((p) =>
+    p.prices.map((price) => {
+      const override = company.priceOverrides.find(
+        (o) => o.planProductId === p.id && o.cycle === price.cycle
+      );
+      return {
+        planProductId: p.id,
+        name: p.name,
+        cycle: price.cycle,
+        defaultPrice: Number(price.unitPrice),
+        overridePrice: override ? Number(override.unitPrice) : null,
+      };
+    })
+  );
 
   const address = [
     company.billingStreet,
