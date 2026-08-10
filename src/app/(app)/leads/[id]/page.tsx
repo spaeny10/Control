@@ -11,7 +11,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrency, formatDate, fullName } from "@/lib/format";
-import { Building2, HardHat } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Building2, HardHat, Plus } from "lucide-react";
 
 export const metadata = { title: "Lead" };
 
@@ -125,13 +126,20 @@ export default async function LeadDetailPage({
           </Card>
 
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Quotes</CardTitle>
+              {lead.companyId && (
+                <Button asChild size="sm" variant="outline" className="gap-1">
+                  <Link href={`/quotes/new?leadId=${lead.id}`}>
+                    <Plus className="h-3.5 w-3.5" /> Create quote
+                  </Link>
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               {lead.quotes.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No quotes yet. Quote building arrives in Phase 4.
+                  No quotes yet.
                 </p>
               ) : (
                 <div className="divide-y">

@@ -10,8 +10,8 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
+import { BigviewLogo } from "@/components/brand/logo";
 
 export default function LoginPage() {
   const [errorMessage, formAction, isPending] = useActionState(
@@ -23,9 +23,9 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold tracking-tight">
-            BIGVIEW Control
-          </CardTitle>
+          <div className="mb-2 flex justify-center">
+            <BigviewLogo textClassName="text-3xl" markClassName="h-8" />
+          </div>
           <CardDescription>
             Sign in to manage rentals & subscriptions
           </CardDescription>

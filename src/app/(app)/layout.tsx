@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { BigviewLogo } from "@/components/brand/logo";
 import { logout } from "@/lib/actions/auth-actions";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
@@ -17,9 +18,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r bg-background">
         <div className="flex h-14 items-center border-b px-4">
-          <span className="text-lg font-bold tracking-tight">
-            BIGVIEW <span className="text-primary">Control</span>
-          </span>
+          <BigviewLogo textClassName="text-lg" />
         </div>
         <div className="flex-1 overflow-y-auto py-4">
           <SidebarNav />
