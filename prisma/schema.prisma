@@ -127,6 +127,8 @@ model Company {
   website          String?
   notes            String?
   stripeCustomerId String?  @unique
+  // Customer portal access link token — generated on first share.
+  portalToken      String?  @unique
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

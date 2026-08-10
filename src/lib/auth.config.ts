@@ -10,7 +10,8 @@ export const authConfig = {
       const isLoggedIn = !!auth?.user;
       const isPublic =
         nextUrl.pathname.startsWith("/login") ||
-        nextUrl.pathname.startsWith("/q/");
+        nextUrl.pathname.startsWith("/q/") ||
+        nextUrl.pathname.startsWith("/portal/");
       if (isPublic) return true;
       return isLoggedIn;
     },

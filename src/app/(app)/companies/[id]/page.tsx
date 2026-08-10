@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { CompanyFormDialog } from "@/components/companies/company-form-dialog";
+import { PortalLinkButton } from "@/components/companies/portal-link-button";
 import { ContactFormDialog } from "@/components/contacts/contact-form-dialog";
 import { Chatter } from "@/components/chatter/chatter";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +54,8 @@ export default async function CompanyDetailPage({
           <h1 className="text-2xl font-bold tracking-tight">{company.name}</h1>
           <p className="text-muted-foreground">{address || "No address"}</p>
         </div>
+        <div className="flex items-center gap-2">
+        <PortalLinkButton companyId={company.id} />
         <CompanyFormDialog
           company={{
             id: company.id,
@@ -65,6 +68,7 @@ export default async function CompanyDetailPage({
             notes: company.notes,
           }}
         />
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
