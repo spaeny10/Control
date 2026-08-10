@@ -16,6 +16,7 @@ import { statusBadgeVariant } from "@/lib/badges";
 import { quoteTotals } from "@/lib/quote-utils";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { FilterPills } from "@/components/layout/filter-pills";
+import { SearchInput } from "@/components/layout/search-input";
 import { Plus } from "lucide-react";
 
 export const metadata = { title: "Quotes" };
@@ -23,9 +24,10 @@ export const metadata = { title: "Quotes" };
 export default async function QuotesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status } = await searchParams;
+  const { status, q } = await searchParams;
+  const search = q?.trim();
   const validStatus = ["DRAFT", "SENT", "ACCEPTED", "DECLINED", "EXPIRED"].includes(
     status ?? ""
   )
@@ -33,7 +35,18 @@ export default async function QuotesPage({
     : undefined;
 
   const quotes = await prisma.quote.findMany({
-    where: validStatus ? { status: validStatus } : undefined,
+    where: {
+      ...(validStatus ? { status: validStatus } : {}),
+      ...(search
+        ? {
+            OR: [
+              { number: { contains: search, mode: "insensitive" } },
+              { company: { name: { contains: search, mode: "insensitive" } } },
+              { project: { name: { contains: search, mode: "insensitive" } } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { createdAt: "desc" },
     include: {
       company: { select: { id: true, name: true } },
@@ -51,10 +64,12 @@ export default async function QuotesPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search quotes..." />
           <FilterPills
             basePath="/quotes"
             param="status"
             current={validStatus}
+            keepParams={{ q: search }}
             options={[
               { value: "DRAFT", label: "Draft" },
               { value: "SENT", label: "Sent" },

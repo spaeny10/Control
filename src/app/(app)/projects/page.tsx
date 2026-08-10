@@ -14,22 +14,39 @@ import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { FilterPills } from "@/components/layout/filter-pills";
+import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Projects" };
 
 export default async function ProjectsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status } = await searchParams;
+  const { status, q } = await searchParams;
+  const search = q?.trim();
   const validStatus = ["UPCOMING", "ACTIVE", "COMPLETED"].includes(status ?? "")
     ? (status as "UPCOMING" | "ACTIVE" | "COMPLETED")
     : undefined;
 
   const [projects, companies] = await Promise.all([
     prisma.project.findMany({
-      where: validStatus ? { status: validStatus } : undefined,
+      where: {
+        ...(validStatus ? { status: validStatus } : {}),
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search, mode: "insensitive" } },
+                { siteCity: { contains: search, mode: "insensitive" } },
+                {
+                  company: {
+                    name: { contains: search, mode: "insensitive" },
+                  },
+                },
+              ],
+            }
+          : {}),
+      },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
         company: { select: { id: true, name: true } },
@@ -51,11 +68,13 @@ export default async function ProjectsPage({
             Construction projects & temporary jobs your trailers serve
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search projects..." />
           <FilterPills
             basePath="/projects"
             param="status"
             current={validStatus}
+            keepParams={{ q: search }}
             options={[
               { value: "UPCOMING", label: "Upcoming" },
               { value: "ACTIVE", label: "Active" },

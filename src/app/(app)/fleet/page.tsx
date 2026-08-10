@@ -18,15 +18,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { statusBadgeVariant } from "@/lib/badges";
 import { FilterPills } from "@/components/layout/filter-pills";
+import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Fleet" };
 
 export default async function FleetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status } = await searchParams;
+  const { status, q } = await searchParams;
+  const search = q?.trim();
   const validStatus = ["AVAILABLE", "DEPLOYED", "MAINTENANCE", "RETIRED"].includes(
     status ?? ""
   )
@@ -34,7 +36,18 @@ export default async function FleetPage({
     : undefined;
 
   const trailers = await prisma.trailer.findMany({
-    where: validStatus ? { status: validStatus } : undefined,
+    where: {
+      ...(validStatus ? { status: validStatus } : {}),
+      ...(search
+        ? {
+            OR: [
+              { unitNumber: { contains: search, mode: "insensitive" } },
+              { model: { contains: search, mode: "insensitive" } },
+              { notes: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { unitNumber: "asc" },
     include: {
       deployments: {
@@ -73,11 +86,13 @@ export default async function FleetPage({
             BIGVIEW trailer units and where they are
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search units..." />
           <FilterPills
             basePath="/fleet"
             param="status"
             current={validStatus}
+            keepParams={{ q: search }}
             options={[
               { value: "AVAILABLE", label: "Available" },
               { value: "DEPLOYED", label: "Deployed" },

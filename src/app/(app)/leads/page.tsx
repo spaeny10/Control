@@ -2,12 +2,37 @@ import { prisma } from "@/lib/prisma";
 import { LeadFormDialog } from "@/components/leads/lead-form-dialog";
 import { LeadsKanban, type KanbanLead } from "@/components/leads/leads-kanban";
 import { fullName } from "@/lib/format";
+import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Leads" };
 
-export default async function LeadsPage() {
+export default async function LeadsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
+  const search = q?.trim();
+
   const [leads, companies, contacts] = await Promise.all([
     prisma.lead.findMany({
+      where: search
+        ? {
+            OR: [
+              { title: { contains: search, mode: "insensitive" } },
+              { source: { contains: search, mode: "insensitive" } },
+              { company: { name: { contains: search, mode: "insensitive" } } },
+              {
+                contact: {
+                  OR: [
+                    { firstName: { contains: search, mode: "insensitive" } },
+                    { lastName: { contains: search, mode: "insensitive" } },
+                  ],
+                },
+              },
+            ],
+          }
+        : undefined,
       orderBy: { createdAt: "desc" },
       include: {
         company: { select: { name: true } },
@@ -51,14 +76,17 @@ export default async function LeadsPage() {
             Drag cards between stages to update the pipeline
           </p>
         </div>
-        <LeadFormDialog
-          companies={companies}
-          contacts={contacts.map((c) => ({
-            id: c.id,
-            name: fullName(c),
-            companyId: c.companyId,
-          }))}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search leads..." />
+          <LeadFormDialog
+            companies={companies}
+            contacts={contacts.map((c) => ({
+              id: c.id,
+              name: fullName(c),
+              companyId: c.companyId,
+            }))}
+          />
+        </div>
       </div>
 
       <LeadsKanban leads={kanbanLeads} />

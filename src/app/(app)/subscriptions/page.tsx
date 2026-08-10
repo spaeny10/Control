@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { FilterPills } from "@/components/layout/filter-pills";
+import { SearchInput } from "@/components/layout/search-input";
 import { statusBadgeVariant } from "@/lib/badges";
 
 export const metadata = { title: "Subscriptions" };
@@ -25,9 +26,10 @@ export const metadata = { title: "Subscriptions" };
 export default async function SubscriptionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status } = await searchParams;
+  const { status, q } = await searchParams;
+  const search = q?.trim();
   const validStatus = ["ACTIVE", "PAST_DUE", "PAUSED", "ENDED"].includes(
     status ?? ""
   )
@@ -35,7 +37,26 @@ export default async function SubscriptionsPage({
     : undefined;
 
   const subscriptions = await prisma.subscription.findMany({
-    where: validStatus ? { status: validStatus } : undefined,
+    where: {
+      ...(validStatus ? { status: validStatus } : {}),
+      ...(search
+        ? {
+            OR: [
+              { company: { name: { contains: search, mode: "insensitive" } } },
+              { project: { name: { contains: search, mode: "insensitive" } } },
+              {
+                deployments: {
+                  some: {
+                    trailer: {
+                      unitNumber: { contains: search, mode: "insensitive" },
+                    },
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    },
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     include: {
       company: { select: { id: true, name: true } },
@@ -61,10 +82,13 @@ export default async function SubscriptionsPage({
             {active.length} active · {formatCurrency(totalMrr)}/mo MRR
           </p>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput placeholder="Search subscriptions..." />
         <FilterPills
           basePath="/subscriptions"
           param="status"
           current={validStatus}
+          keepParams={{ q: search }}
           options={[
             { value: "ACTIVE", label: "Active" },
             { value: "PAST_DUE", label: "Past due" },
@@ -72,6 +96,7 @@ export default async function SubscriptionsPage({
             { value: "ENDED", label: "Ended" },
           ]}
         />
+        </div>
       </div>
 
       <Card>

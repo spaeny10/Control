@@ -13,11 +13,33 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { ExternalLink } from "lucide-react";
+import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Invoices" };
 
-export default async function InvoicesPage() {
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
+  const search = q?.trim();
+
   const invoices = await prisma.invoice.findMany({
+    where: search
+      ? {
+          OR: [
+            { number: { contains: search, mode: "insensitive" } },
+            {
+              subscription: {
+                company: {
+                  name: { contains: search, mode: "insensitive" },
+                },
+              },
+            },
+          ],
+        }
+      : undefined,
     orderBy: { createdAt: "desc" },
     include: {
       subscription: {
@@ -32,11 +54,14 @@ export default async function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Invoices</h1>
-        <p className="text-muted-foreground">
-          Synced from Stripe · {formatCurrency(outstanding)} outstanding
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Invoices</h1>
+          <p className="text-muted-foreground">
+            Synced from Stripe · {formatCurrency(outstanding)} outstanding
+          </p>
+        </div>
+        <SearchInput placeholder="Search invoices..." />
       </div>
 
       <Card>
