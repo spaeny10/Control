@@ -243,8 +243,49 @@ model TrailerDeployment {
   returnedAt     DateTime?
   notes          String?
 
+  // Condition documentation (photos + signature) at delivery and return.
+  deliverySignedBy String?
+  deliverySignedAt DateTime?
+  returnSignedBy   String?
+  returnSignedAt   DateTime?
+
+  photos     DeploymentPhoto[]
+  signatures DeploymentSignature[]
+
   @@index([trailerId])
   @@index([subscriptionId])
+}
+
+enum DeploymentPhase {
+  DELIVERY
+  RETURN
+}
+
+// Photos stored in Postgres — fine at this scale (client resizes to ~1600px
+// JPEG before upload); revisit object storage if volume grows.
+model DeploymentPhoto {
+  id           String            @id @default(cuid())
+  deploymentId String
+  deployment   TrailerDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  phase        DeploymentPhase
+  data         Bytes
+  mimeType     String            @default("image/jpeg")
+  caption      String?
+  createdAt    DateTime          @default(now())
+
+  @@index([deploymentId])
+}
+
+model DeploymentSignature {
+  id           String            @id @default(cuid())
+  deploymentId String
+  deployment   TrailerDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  phase        DeploymentPhase
+  data         Bytes // PNG from the signature canvas
+  signedBy     String
+  createdAt    DateTime          @default(now())
+
+  @@index([deploymentId])
 }
 
 model MaintenanceLog {

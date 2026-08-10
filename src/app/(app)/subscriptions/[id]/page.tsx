@@ -5,6 +5,8 @@ import { Chatter } from "@/components/chatter/chatter";
 import { EndSubscriptionDialog } from "@/components/subscriptions/end-subscription-dialog";
 import { DeployTrailersDialog } from "@/components/subscriptions/deploy-trailers-dialog";
 import { ReturnTrailerButton } from "@/components/fleet/return-trailer-button";
+import { DeploymentDocsDialog } from "@/components/fleet/deployment-docs-dialog";
+import { DeploymentDocsList } from "@/components/fleet/deployment-docs-list";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -35,6 +37,19 @@ export default async function SubscriptionDetailPage({
           orderBy: { deployedAt: "desc" },
           include: {
             trailer: { select: { id: true, unitNumber: true, model: true } },
+            photos: {
+              select: { id: true, phase: true, createdAt: true },
+              orderBy: { createdAt: "asc" },
+            },
+            signatures: {
+              select: {
+                id: true,
+                phase: true,
+                signedBy: true,
+                createdAt: true,
+              },
+              orderBy: { createdAt: "asc" },
+            },
           },
         },
         invoices: { orderBy: { createdAt: "desc" } },
@@ -128,28 +143,40 @@ export default async function SubscriptionDetailPage({
               ) : (
                 <div className="divide-y">
                   {subscription.deployments.map((d) => (
-                    <div
-                      key={d.id}
-                      className="flex items-center justify-between py-2 text-sm"
-                    >
-                      <div>
-                        <Link
-                          href={`/fleet/${d.trailer.id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {d.trailer.unitNumber}
-                        </Link>
-                        <p className="text-xs text-muted-foreground">
-                          {formatDate(d.deployedAt)} →{" "}
-                          {d.returnedAt ? formatDate(d.returnedAt) : "on site"}
-                        </p>
+                    <div key={d.id} className="py-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Link
+                            href={`/fleet/${d.trailer.id}`}
+                            className="font-medium hover:underline"
+                          >
+                            {d.trailer.unitNumber}
+                          </Link>
+                          <p className="text-xs text-muted-foreground">
+                            {formatDate(d.deployedAt)} →{" "}
+                            {d.returnedAt
+                              ? formatDate(d.returnedAt)
+                              : "on site"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <DeploymentDocsDialog
+                            deploymentId={d.id}
+                            unitNumber={d.trailer.unitNumber}
+                            defaultPhase={d.returnedAt ? "RETURN" : "DELIVERY"}
+                          />
+                          {!d.returnedAt && isLive && (
+                            <ReturnTrailerButton
+                              deploymentId={d.id}
+                              unitNumber={d.trailer.unitNumber}
+                            />
+                          )}
+                        </div>
                       </div>
-                      {!d.returnedAt && isLive && (
-                        <ReturnTrailerButton
-                          deploymentId={d.id}
-                          unitNumber={d.trailer.unitNumber}
-                        />
-                      )}
+                      <DeploymentDocsList
+                        photos={d.photos}
+                        signatures={d.signatures}
+                      />
                     </div>
                   ))}
                 </div>
