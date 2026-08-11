@@ -43,7 +43,7 @@ export default function manifest(): MetadataRoute.Manifest {
     shortcuts: [
       { name: "Dispatch", url: "/dispatch" },
       { name: "Fleet", url: "/fleet" },
-      { name: "Leads", url: "/leads" },
+      { name: "Pipeline", url: "/leads" },
     ],
   };
 }

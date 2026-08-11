@@ -5,10 +5,9 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
-  Users,
+  Filter,
   BadgeDollarSign,
   Contact,
-  HardHat,
   FileText,
   Repeat,
   Receipt,
@@ -33,7 +32,9 @@ const SECTIONS: { area: AppArea; label: string; items: NavItem[] }[] = [
     area: "SALES",
     label: "Sales",
     items: [
-      { href: "/leads", label: "Leads", icon: Users },
+      /* "Pipeline" names the staged view; the records in it are still leads.
+         The route stays /leads so existing links and bookmarks keep working. */
+      { href: "/leads", label: "Pipeline", icon: Filter },
       { href: "/quotes", label: "Quotes", icon: FileText },
       { href: "/contacts", label: "Contacts", icon: Contact },
       /* No Projects entry: a job you're chasing is a project-track lead, and a

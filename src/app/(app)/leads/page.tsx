@@ -21,7 +21,9 @@ import {
 } from "@/lib/lead-tracks";
 import type { Prisma } from "@prisma/client";
 
-export const metadata = { title: "Leads" };
+/* The page is "Pipeline" — a staged view. The records in it are still leads,
+   which is the vocabulary the rest of the app and the chatter use. */
+export const metadata = { title: "Pipeline" };
 
 // Prisma only accepts the { sort, nulls } object form on nullable columns —
 // non-nullable ones must use a plain "asc"/"desc".
@@ -226,7 +228,7 @@ export default async function LeadsPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Leads</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Pipeline</h1>
           {/* No dollar figure on the organization track — enforced by the
               branch, not by hoping the data is null. */}
           <p className="text-muted-foreground">
