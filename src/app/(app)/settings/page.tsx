@@ -13,8 +13,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatDateTime } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
+import { isGoogleConfigured } from "@/lib/google/client";
+import { GmailMailboxesCard } from "@/components/settings/gmail-mailboxes-card";
 
 export const metadata = { title: "Settings" };
 
@@ -29,7 +31,9 @@ export default async function SettingsPage({
   const validTabs = ["profile", "team", "sales", "catalog", "integrations"];
   const defaultTab = validTabs.includes(tab ?? "") ? tab! : "profile";
 
-  const [users, products, teams] = await Promise.all([
+  const googleConfigured = isGoogleConfigured();
+
+  const [users, products, teams, mailboxes] = await Promise.all([
     isAdmin
       ? prisma.user.findMany({ orderBy: { name: "asc" } })
       : Promise.resolve([]),
@@ -42,6 +46,9 @@ export default async function SettingsPage({
           orderBy: { name: "asc" },
           include: { _count: { select: { members: true } } },
         })
+      : Promise.resolve([]),
+    isAdmin
+      ? prisma.gmailSyncState.findMany({ orderBy: { emailAddress: "asc" } })
       : Promise.resolve([]),
   ]);
 
@@ -209,7 +216,7 @@ export default async function SettingsPage({
           </Card>
         </TabsContent>
 
-        <TabsContent value="integrations">
+        <TabsContent value="integrations" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Integrations</CardTitle>
@@ -224,7 +231,22 @@ export default async function SettingsPage({
                   name: "Stripe webhooks",
                   on: !!process.env.STRIPE_WEBHOOK_SECRET,
                 },
-                { name: "SendGrid email", on: !!process.env.SENDGRID_API_KEY },
+                {
+                  name: "Google Workspace (service account)",
+                  on: googleConfigured,
+                },
+                {
+                  name: "Google sign-in (SSO)",
+                  on: !!process.env.AUTH_GOOGLE_ID,
+                },
+                {
+                  name: "Gmail push (Pub/Sub)",
+                  on: !!process.env.GOOGLE_PUBSUB_TOPIC,
+                },
+                {
+                  name: "Drive storage",
+                  on: !!process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID,
+                },
                 { name: "Twilio SMS", on: !!process.env.TWILIO_ACCOUNT_SID },
               ].map((i) => (
                 <div
@@ -239,6 +261,26 @@ export default async function SettingsPage({
               ))}
             </CardContent>
           </Card>
+
+          {isAdmin && (
+            <GmailMailboxesCard
+              configured={googleConfigured && !!process.env.GOOGLE_PUBSUB_TOPIC}
+              mailboxes={mailboxes.map((m) => ({
+                id: m.id,
+                emailAddress: m.emailAddress,
+                isActive: m.isActive,
+                watchExpiration: m.watchExpiration
+                  ? formatDateTime(m.watchExpiration)
+                  : null,
+                expired:
+                  !!m.watchExpiration && m.watchExpiration < new Date(),
+                lastSyncedAt: m.lastSyncedAt
+                  ? formatDateTime(m.lastSyncedAt)
+                  : null,
+                lastError: m.lastError,
+              }))}
+            />
+          )}
         </TabsContent>
       </Tabs>
     </div>

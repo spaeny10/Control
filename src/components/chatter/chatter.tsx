@@ -6,7 +6,8 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/format";
-import { NoteForm } from "./note-form";
+import { ComposeForm } from "./compose-form";
+import { isGmailConfigured } from "@/lib/google/gmail";
 import type { ChatterParent } from "@/lib/actions/message-actions";
 import {
   StickyNote,
@@ -41,10 +42,13 @@ export function Chatter({
   messages,
   parent,
   revalidate,
+  defaultEmailTo,
 }: {
   messages: ChatterMessage[];
   parent: ChatterParent;
   revalidate: string;
+  /** Prefills the email composer (usually the record's primary/AP contact). */
+  defaultEmailTo?: string | null;
 }) {
   return (
     <Card>
@@ -52,7 +56,12 @@ export function Chatter({
         <CardTitle className="text-base">Activity</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <NoteForm parent={parent} revalidate={revalidate} />
+        <ComposeForm
+          parent={parent}
+          revalidate={revalidate}
+          emailEnabled={isGmailConfigured()}
+          defaultTo={defaultEmailTo}
+        />
         <div className="space-y-3">
           {messages.length === 0 && (
             <p className="py-4 text-center text-sm text-muted-foreground">

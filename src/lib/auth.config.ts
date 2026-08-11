@@ -3,7 +3,12 @@ import type { NextAuthConfig } from "next-auth";
 // Edge-safe config (no Prisma) shared by middleware and the full auth setup.
 export const authConfig = {
   session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
+  // error → /login so provider failures we don't control (OAuthCallbackError,
+  // Configuration, …) land on our styled page rather than Auth.js's default.
+  pages: { signIn: "/login", error: "/login" },
+  // Providers live in auth.ts (Node) rather than here: this config is also
+  // loaded by proxy.ts on every matched request, and it has no need for the
+  // OAuth machinery or a Prisma client.
   providers: [],
   callbacks: {
     authorized({ auth, request: { nextUrl } }) {

@@ -118,7 +118,8 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String
-  passwordHash String
+  // Nullable: users who sign in with Google have no local password.
+  passwordHash String?
   role         Role     @default(MEMBER)
   isActive     Boolean  @default(true)
   areas        AppArea[] @default([SALES, FLEET, ACCOUNTING, TECH_ADMIN])
@@ -329,7 +330,10 @@ model DeploymentPhoto {
   deploymentId String
   deployment   TrailerDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
   phase        DeploymentPhase
-  data         Bytes
+  // Exactly one of data / driveFileId is set. Older rows keep their bytes;
+  // new uploads go to Drive when it's configured. Serving routes dual-read.
+  data         Bytes?
+  driveFileId  String?
   mimeType     String            @default("image/jpeg")
   caption      String?
   createdAt    DateTime          @default(now())
@@ -342,7 +346,8 @@ model DeploymentSignature {
   deploymentId String
   deployment   TrailerDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
   phase        DeploymentPhase
-  data         Bytes // PNG from the signature canvas
+  data         Bytes? // PNG from the signature canvas (or Drive, see below)
+  driveFileId  String?
   signedBy     String
   createdAt    DateTime          @default(now())
 
@@ -529,6 +534,8 @@ model DispatchJob {
   subscriptionId String?
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   trailerIds     String[] // unit ids involved (loose reference for flexibility)
+  // Google Calendar event id (one-way sync, app is source of truth).
+  googleEventId  String?
   completedAt    DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -557,6 +564,8 @@ model Activity {
   dueDate     DateTime
   done        Boolean      @default(false)
   completedAt DateTime?
+  // Google Calendar event id (one-way sync, app is source of truth).
+  googleEventId String?
   assigneeId  String?
   assignee    User?        @relation("ActivityAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   // matched by User.assignedActivities
@@ -589,7 +598,12 @@ model Message {
   body              String
   fromAddress       String? // email address or phone number
   toAddress         String?
-  providerMessageId String? // SendGrid/Twilio message id
+  // @unique makes this a real idempotency key: Pub/Sub delivers at-least-once,
+  // so two concurrent deliveries must not both insert. NULL is unconstrained,
+  // so NOTE/SYSTEM messages are unaffected.
+  providerMessageId String? @unique
+  // Gmail thread id — inbound replies are matched to a record by thread.
+  providerThreadId  String?
   deliveryStatus    DeliveryStatus?
   authorId          String?
   author            User?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
@@ -614,5 +628,27 @@ model Message {
   @@index([companyId])
   @@index([trailerId])
   @@index([projectId])
-  @@index([providerMessageId])
+  @@index([providerThreadId])
+}
+
+// One row per Gmail mailbox we watch, so push notifications can be resolved
+// incrementally (Gmail push carries only a historyId) and the ~7-day watch
+// can be renewed before it lapses.
+model GmailSyncState {
+  id           String  @id @default(cuid())
+  emailAddress String  @unique
+  // Doubles as the impersonation allowlist: we refuse to act on any mailbox
+  // that isn't an active row here.
+  isActive     Boolean @default(true)
+
+  lastHistoryId   String? // uint64 as string; only ever advanced forwards
+  watchExpiration DateTime?
+  // Concurrency claim. Pub/Sub can deliver two notifications at once; a
+  // claim column is pool-safe, unlike pg advisory locks under Prisma pooling.
+  syncLockedAt    DateTime?
+  lastSyncedAt    DateTime?
+  lastError       String?
+  updatedAt       DateTime  @updatedAt
+
+  @@index([watchExpiration])
 }

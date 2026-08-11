@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
 import type { JobStatus } from "@prisma/client";
+import { syncJobEvent, deleteJobEvent } from "@/lib/google/calendar";
 
 const jobSchema = z.object({
   type: z.enum(["DELIVERY", "PICKUP", "SERVICE"]),
@@ -68,6 +69,10 @@ export async function createJob(formData: FormData): Promise<ActionResult> {
     });
   }
 
+  // Push to the driver's Google Calendar. Failure-isolated inside — a
+  // calendar problem must not undo a scheduled job.
+  await syncJobEvent(job.id);
+
   revalidatePath("/dispatch");
   return { ok: true, id: job.id };
 }
@@ -86,6 +91,10 @@ export async function setJobStatus(
       completedAt: status === "DONE" ? new Date() : null,
     },
   });
+
+  // Cancelling removes the event; other transitions keep it in step.
+  await syncJobEvent(id);
+
   revalidatePath("/dispatch");
   return { ok: true };
 }
@@ -93,6 +102,10 @@ export async function setJobStatus(
 export async function deleteJob(id: string): Promise<ActionResult> {
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
+
+  // Remove the calendar event first — this is a hard delete, so afterwards
+  // we'd have no way to find the event id.
+  await deleteJobEvent(id);
 
   await prisma.dispatchJob.delete({ where: { id } });
   revalidatePath("/dispatch");

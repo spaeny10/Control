@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import type { ActionResult } from "./company-actions";
+import { isGmailConfigured, sendEmailAs } from "@/lib/google/gmail";
 
 const lineItemSchema = z.object({
   cycle: z.enum(["ONE_TIME", "DAILY", "WEEKLY", "EVERY_28_DAYS", "MONTHLY"]),
@@ -134,8 +135,27 @@ export async function updateQuote(
   return { ok: true, id };
 }
 
-// Marks the quote SENT and (Phase 6) emails the public link. Until SendGrid
-// is configured the link is logged to chatter for manual sharing.
+function quoteEmailHtml(opts: {
+  contactName: string | null;
+  companyName: string;
+  quoteNumber: string;
+  publicUrl: string;
+  senderName: string;
+}) {
+  return `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;color:#25282f">
+  <p>${opts.contactName ? `Hi ${opts.contactName},` : "Hello,"}</p>
+  <p>Your BIGVIEW security trailer quote <strong>${opts.quoteNumber}</strong> for ${opts.companyName} is ready to review.</p>
+  <p style="margin:24px 0">
+    <a href="${opts.publicUrl}" style="background:#2a78d6;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;display:inline-block;font-weight:600">Review &amp; accept your quote</a>
+  </p>
+  <p style="color:#52514e;font-size:13px">You can accept it right from that page — no account needed. Reply to this email with any questions.</p>
+  <p style="margin-top:24px">${opts.senderName}<br><span style="color:#52514e">BIGVIEW Security Trailers</span></p>
+</div>`;
+}
+
+// Marks the quote SENT and emails the public accept link from the sender's
+// Workspace mailbox. Falls back to logging the link on the record when Google
+// isn't connected, so the quote can still be shared manually.
 export async function sendQuote(id: string): Promise<ActionResult> {
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
@@ -152,20 +172,60 @@ export async function sendQuote(id: string): Promise<ActionResult> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const publicUrl = `${baseUrl}/q/${quote.publicToken}`;
 
-  // TODO Phase 6: send via SendGrid to quote.contact.email
+  const recipient = quote.contact?.email ?? null;
+  const contactName = quote.contact?.firstName ?? null;
+
+  // Try the real email first so its outcome can be recorded accurately.
+  const sent =
+    isGmailConfigured() && recipient
+      ? await sendEmailAs({
+          senderEmail: session.user.email ?? "",
+          senderName: session.user.name ?? "BIGVIEW",
+          to: recipient,
+          subject: `Your BIGVIEW quote ${quote.number} — ${quote.company.name}`,
+          html: quoteEmailHtml({
+            contactName,
+            companyName: quote.company.name,
+            quoteNumber: quote.number,
+            publicUrl,
+            senderName: session.user.name ?? "BIGVIEW",
+          }),
+        })
+      : null;
+
   await prisma.$transaction([
     prisma.quote.update({
       where: { id },
       data: { status: "SENT", sentAt: new Date() },
     }),
-    prisma.message.create({
-      data: {
-        channel: "SYSTEM",
-        body: `Quote marked sent. Public link: ${publicUrl}`,
-        authorId: session.user.id,
-        quoteId: id,
-      },
-    }),
+    sent
+      ? prisma.message.create({
+          data: {
+            channel: "EMAIL",
+            direction: "OUT",
+            subject: `Your BIGVIEW quote ${quote.number}`,
+            body: `Quote ${quote.number} emailed to ${recipient}.\n\n${publicUrl}`,
+            toAddress: recipient,
+            fromAddress: sent.fromAddress,
+            providerMessageId: sent.messageId,
+            providerThreadId: sent.threadId,
+            deliveryStatus: "SENT",
+            authorId: session.user.id,
+            quoteId: id,
+          },
+        })
+      : prisma.message.create({
+          data: {
+            channel: "SYSTEM",
+            body: !recipient
+              ? `Quote marked sent, but no contact email is on file — share this link manually: ${publicUrl}`
+              : !isGmailConfigured()
+                ? `Quote marked sent. Google Workspace isn't connected, so share this link manually: ${publicUrl}`
+                : `Quote marked sent, but the email failed to send — share this link manually: ${publicUrl}`,
+            authorId: session.user.id,
+            quoteId: id,
+          },
+        }),
   ]);
 
   // Advance the linked lead to QUOTE_SENT if it's still earlier in the pipeline.
@@ -182,6 +242,19 @@ export async function sendQuote(id: string): Promise<ActionResult> {
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
   if (quote.leadId) revalidatePath(`/leads/${quote.leadId}`);
+
+  // Report honestly: the quote IS sent either way, but say so when the email
+  // didn't actually go out so nobody assumes the customer has it.
+  if (!sent) {
+    return {
+      ok: true,
+      error: !recipient
+        ? "Marked sent — no contact email on file, so share the link manually."
+        : !isGmailConfigured()
+          ? "Marked sent — Google Workspace isn't connected, so share the link manually."
+          : "Marked sent, but the email failed — share the link manually.",
+    };
+  }
   return { ok: true };
 }
 

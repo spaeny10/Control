@@ -29,6 +29,14 @@ export async function changePassword(
     where: { id: session.user.id },
   });
   if (!user) return { ok: false, error: "User not found" };
+  // SSO-only accounts have no local password to change.
+  if (!user.passwordHash) {
+    return {
+      ok: false,
+      error:
+        "This account signs in with Google — manage the password in your Google account.",
+    };
+  }
 
   const valid = await bcrypt.compare(current, user.passwordHash);
   if (!valid) return { ok: false, error: "Current password is incorrect" };

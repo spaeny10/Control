@@ -31,12 +31,18 @@ export async function getUserAreas(): Promise<{
   }
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { areas: true },
+    select: { areas: true, isActive: true },
   });
+  // Sessions outlive deactivation (JWT strategy), so revoke access here as
+  // well as at sign-in — otherwise a deactivated user keeps working until
+  // their token expires.
+  if (!user || !user.isActive) {
+    return { userId: session.user.id, isAdmin: false, areas: [] };
+  }
   return {
     userId: session.user.id,
     isAdmin: false,
-    areas: user?.areas ?? [],
+    areas: user.areas,
   };
 }
 

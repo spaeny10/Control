@@ -5,9 +5,28 @@ import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
 import type { DeploymentPhase } from "@prisma/client";
+import { uploadDeploymentFile } from "@/lib/google/drive";
 
 const MAX_PHOTO_BYTES = 4 * 1024 * 1024;
 const MAX_PHOTOS = 8;
+
+/** Group Drive uploads by project (falling back to company) so ops can browse. */
+async function driveFolderName(deploymentId: string): Promise<string> {
+  const deployment = await prisma.trailerDeployment.findUnique({
+    where: { id: deploymentId },
+    select: {
+      subscription: {
+        select: {
+          company: { select: { name: true } },
+          project: { select: { name: true } },
+        },
+      },
+    },
+  });
+  const project = deployment?.subscription?.project?.name;
+  const company = deployment?.subscription?.company.name;
+  return (project ?? company ?? "Unassigned").replace(/[\\/:*?"<>|]/g, "-");
+}
 
 export async function saveDeploymentDocs(
   deploymentId: string,
@@ -48,15 +67,31 @@ export async function saveDeploymentDocs(
     }
   }
 
+  // Drive when it's configured, Postgres otherwise. If a Drive upload fails
+  // we still keep the bytes locally — never lose a photo over an API error.
+  const folderName = await driveFolderName(deploymentId);
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const unit = deployment.trailer.unitNumber;
+
   // Store photos
+  let index = 0;
   for (const photo of photos) {
+    index++;
     const buffer = Buffer.from(await photo.arrayBuffer());
+    const mimeType = photo.type || "image/jpeg";
+    const driveFileId = await uploadDeploymentFile({
+      folderName,
+      fileName: `${unit}-${phase.toLowerCase()}-${stamp}-${index}.jpg`,
+      mimeType,
+      body: buffer,
+    });
     await prisma.deploymentPhoto.create({
       data: {
         deploymentId,
         phase,
-        data: buffer,
-        mimeType: photo.type || "image/jpeg",
+        driveFileId,
+        data: driveFileId ? null : buffer,
+        mimeType,
       },
     });
   }
@@ -70,8 +105,20 @@ export async function saveDeploymentDocs(
     if (buffer.length > MAX_PHOTO_BYTES) {
       return { ok: false, error: "Signature image too large" };
     }
+    const driveFileId = await uploadDeploymentFile({
+      folderName,
+      fileName: `${unit}-${phase.toLowerCase()}-${stamp}-signature.png`,
+      mimeType: "image/png",
+      body: buffer,
+    });
     await prisma.deploymentSignature.create({
-      data: { deploymentId, phase, data: buffer, signedBy },
+      data: {
+        deploymentId,
+        phase,
+        driveFileId,
+        data: driveFileId ? null : buffer,
+        signedBy,
+      },
     });
     await prisma.trailerDeployment.update({
       where: { id: deploymentId },

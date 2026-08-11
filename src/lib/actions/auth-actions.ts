@@ -21,6 +21,11 @@ export async function authenticate(
   }
 }
 
+export async function signInWithGoogle() {
+  // Auth.js throws a redirect here; errors surface as ?error= on /login.
+  await signIn("google", { redirectTo: "/" });
+}
+
 export async function logout() {
   await signOut({ redirectTo: "/login" });
 }

@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
+import {
+  syncActivityEvent,
+  deleteActivityEvent,
+} from "@/lib/google/calendar";
 
 export type ActivityParent = {
   leadId?: string;
@@ -33,7 +37,7 @@ export async function scheduleActivity(
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message };
   const d = parsed.data;
 
-  await prisma.activity.create({
+  const activity = await prisma.activity.create({
     data: {
       type: d.type,
       title: d.title,
@@ -43,6 +47,9 @@ export async function scheduleActivity(
       ...parent,
     },
   });
+
+  // Put it on the assignee's Google Calendar (failure-isolated).
+  await syncActivityEvent(activity.id);
 
   revalidatePath(revalidate);
   revalidatePath("/");
@@ -76,6 +83,9 @@ export async function completeActivity(id: string): Promise<ActionResult> {
     }),
   ]);
 
+  // Completed activities come off the calendar.
+  await syncActivityEvent(id);
+
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -83,6 +93,9 @@ export async function completeActivity(id: string): Promise<ActionResult> {
 export async function deleteActivity(id: string): Promise<ActionResult> {
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
+
+  // Remove the event before the row disappears (hard delete).
+  await deleteActivityEvent(id);
 
   await prisma.activity.delete({ where: { id } });
   revalidatePath("/", "layout");

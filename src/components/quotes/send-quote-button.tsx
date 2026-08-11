@@ -23,10 +23,11 @@ export function SendQuoteButton({
       onClick={() => {
         startTransition(async () => {
           const result = await sendQuote(quoteId);
-          if (result.ok) {
-            toast.success(
-              "Quote marked sent — public link logged in the activity feed"
-            );
+          if (result.ok && result.error) {
+            // Sent locally, but the email didn't go out — say so plainly.
+            toast.warning(result.error);
+          } else if (result.ok) {
+            toast.success("Quote emailed to the customer");
           } else {
             toast.error(result.error ?? "Failed to send quote");
           }
