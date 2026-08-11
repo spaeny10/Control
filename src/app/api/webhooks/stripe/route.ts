@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 import { applyTaxToDraftInvoice, reportTaxPaid } from "@/lib/tax";
+import { chargeConvenienceFeeIfCardPaid } from "@/lib/convenience-fee";
 import type { InvoiceStatus } from "@prisma/client";
 
 function mapInvoiceStatus(status: Stripe.Invoice.Status | null): InvoiceStatus {
@@ -138,6 +139,17 @@ export async function POST(req: Request) {
         } catch (err) {
           console.error(
             "[stripe webhook] reporting tax to TaxCloud failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
+        /* The convenience fee can only be known now — it depends on how they
+           actually paid. Queued onto their next invoice rather than added up
+           front, so a check-payer is never billed for card processing. */
+        try {
+          await chargeConvenienceFeeIfCardPaid(stripe, invoice);
+        } catch (err) {
+          console.error(
+            "[stripe webhook] convenience fee failed:",
             err instanceof Error ? err.message : err
           );
         }

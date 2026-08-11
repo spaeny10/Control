@@ -577,6 +577,13 @@ model Invoice {
   taxCloudOrderId  String?
   taxReportedAt    DateTime?
   taxNeedsReview   Boolean       @default(false)
+  /* The convenience fee is only charged when a card was actually used, so it
+     can't be known until this invoice is paid. paidByCard records what we
+     found; convenienceFeeAmount records the fee we then queued onto the
+     customer's next invoice, and doubles as the idempotency key so a replayed
+     webhook can't bill it twice. */
+  paidByCard       Boolean       @default(false)
+  convenienceFeeAmount Decimal?  @db.Decimal(12, 2)
   subscriptionId   String?
   subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   createdAt        DateTime      @default(now())
