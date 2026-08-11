@@ -9,6 +9,11 @@ import type { ActionResult } from "./company-actions";
 const productSchema = z.object({
   name: z.string().min(1, "Name is required"),
   description: z.string().optional().nullable(),
+  /* TaxCloud Taxability Information Code. Rent, delivery, and setup labour are
+     taxed differently by state, so it belongs per product. Null means
+     unclassified — the catalog flags it, and billing falls back to 0 (general
+     tangible personal property) rather than skipping tax. */
+  tic: z.number().int().min(0).optional().nullable(),
   // One entry per offered cycle; at least one price required.
   prices: z
     .array(
@@ -42,6 +47,7 @@ export async function createProduct(
     data: {
       name: parsed.data.name,
       description: parsed.data.description || undefined,
+      tic: parsed.data.tic ?? undefined,
       prices: { create: parsed.data.prices },
     },
   });
@@ -69,6 +75,7 @@ export async function updateProduct(
       data: {
         name: parsed.data.name,
         description: parsed.data.description || null,
+        tic: parsed.data.tic ?? null,
         prices: { create: parsed.data.prices },
       },
     }),

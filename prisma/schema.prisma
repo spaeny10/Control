@@ -473,6 +473,11 @@ model PlanProduct {
   description   String?
   isActive      Boolean      @default(true)
   stripeProductId String?
+  /* TaxCloud Taxability Information Code. Decides how this line is taxed at the
+     jobsite — equipment rental, delivery, and setup labour are treated
+     differently by state, and 0 is general tangible personal property. Null
+     means nobody has classified it yet, which the catalog flags. */
+  tic           Int?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -517,6 +522,14 @@ model Subscription {
   /* Copied from the quote at conversion, then editable — over a long rental the
      AP clerk changes, and the quote is a signed document we shouldn't rewrite.
      The invoice email goes to billingContact; the driver calls siteContact. */
+  /* Card payment is opt-in per subscription: most customers remit by check, and
+     card is only offered when the signed terms say so. When it isn't offered,
+     Stripe's hosted invoice is restricted so a card can't be used at all —
+     otherwise Stripe would happily take one and we'd eat the processing cost.
+     The fee is a percent of the invoice, captured per subscription so a
+     negotiated rate sticks with the deal. */
+  cardPaymentAllowed   Boolean                @default(false)
+  convenienceFeePct    Decimal?               @db.Decimal(5, 2)
   billingContactId     String?
   billingContact       Contact?               @relation("SubscriptionBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
   siteContactId        String?
@@ -553,6 +566,17 @@ model Invoice {
   paidAt           DateTime?
   periodStart      DateTime?
   periodEnd        DateTime?
+  /* Sales tax, calculated by TaxCloud from the jobsite address before the
+     invoice finalizes. cartId is the calculation, orderId is the reported
+     transaction, and taxReportedAt is when it entered a filing — set on payment
+     because we file cash-basis. taxNeedsReview flags a zero result on a line
+     that should have been taxed, since TaxCloud answers zero both for
+     genuinely-exempt items and for states we aren't registered in. */
+  taxAmount        Decimal?      @db.Decimal(12, 2)
+  taxCloudCartId   String?
+  taxCloudOrderId  String?
+  taxReportedAt    DateTime?
+  taxNeedsReview   Boolean       @default(false)
   subscriptionId   String?
   subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   createdAt        DateTime      @default(now())

@@ -38,6 +38,11 @@ const convertSchema = z.object({
   quoteId: z.string().min(1),
   trailerIds: z.array(z.string()).min(0),
   startDate: z.string().optional(),
+  /* Whether the signed terms offer card payment, and the surcharge that comes
+     with it. Default is check/ACH only, which is how most of this business
+     collects. */
+  cardPaymentAllowed: z.boolean().optional(),
+  convenienceFeePct: z.number().min(0).max(100).optional(),
 });
 
 export async function convertQuoteToSubscription(input: {
@@ -51,6 +56,10 @@ export async function convertQuoteToSubscription(input: {
   const parsed = convertSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid input" };
   const { quoteId, trailerIds, startDate } = parsed.data;
+  const cardPaymentAllowed = parsed.data.cardPaymentAllowed ?? false;
+  const convenienceFeePct = cardPaymentAllowed
+    ? (parsed.data.convenienceFeePct ?? null)
+    : null;
 
   const quote = await prisma.quote.findUnique({
     where: { id: quoteId },
@@ -235,6 +244,16 @@ export async function convertQuoteToSubscription(input: {
         days_until_due: 30,
         items: recurringWithProducts,
         add_invoice_items: oneTimeWithProducts,
+        /* Card is opt-in per the signed terms. Left unrestricted, Stripe's
+           hosted invoice would happily take a card on any invoice and leave us
+           paying the processing cost on a deal that never priced for it — so
+           when terms don't offer card, ACH is the only electronic option and
+           anything else arrives as a check we mark paid. */
+        payment_settings: {
+          payment_method_types: cardPaymentAllowed
+            ? ["card", "us_bank_account"]
+            : ["us_bank_account"],
+        },
         metadata: { quoteId: quote.id, companyId: quote.company.id },
       });
       stripeSubscriptionId = subscription.id;
@@ -261,6 +280,8 @@ export async function convertQuoteToSubscription(input: {
       // Copied so they can change over a long rental without editing the quote.
       billingContactId: quote.billingContactId,
       siteContactId: quote.contactId,
+      cardPaymentAllowed,
+      convenienceFeePct,
       // Commission attribution: the lead owner won this; fall back to
       // whoever converted the quote.
       salespersonId: quote.lead?.ownerId ?? session.user.id,

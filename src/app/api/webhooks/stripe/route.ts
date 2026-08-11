@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
+import { applyTaxToDraftInvoice, reportTaxPaid } from "@/lib/tax";
 import type { InvoiceStatus } from "@prisma/client";
 
 function mapInvoiceStatus(status: Stripe.Invoice.Status | null): InvoiceStatus {
@@ -102,21 +103,51 @@ export async function POST(req: Request) {
   }
 
   switch (event.type) {
+    /* The only window where the invoice is still a draft we can add a line to.
+       Sales tax is per-invoice because every recurring period is its own
+       taxable transaction at whatever rate applies then. Failure-isolated: an
+       untaxed invoice is recoverable, an invoice that never sends is not. */
+    case "invoice.created": {
+      const invoice = event.data.object as Stripe.Invoice;
+      await upsertInvoice(invoice);
+      try {
+        await applyTaxToDraftInvoice(stripe, invoice);
+      } catch (err) {
+        console.error(
+          "[stripe webhook] tax on draft invoice failed:",
+          err instanceof Error ? err.message : err
+        );
+      }
+      break;
+    }
+
     case "invoice.finalized":
     case "invoice.updated":
     case "invoice.paid": {
       const invoice = event.data.object as Stripe.Invoice;
       const subscription = await upsertInvoice(invoice);
-      // A paid invoice clears PAST_DUE.
-      if (
-        event.type === "invoice.paid" &&
-        subscription &&
-        subscription.status === "PAST_DUE"
-      ) {
-        await prisma.subscription.update({
-          where: { id: subscription.id },
-          data: { status: "ACTIVE" },
-        });
+      if (event.type === "invoice.paid") {
+        // Cash-basis filing: the transaction reaches TaxCloud now, not when the
+        // invoice was raised.
+        const paidAt =
+          invoice.status_transitions?.paid_at != null
+            ? new Date(invoice.status_transitions.paid_at * 1000)
+            : new Date();
+        try {
+          if (invoice.id) await reportTaxPaid(invoice.id, paidAt);
+        } catch (err) {
+          console.error(
+            "[stripe webhook] reporting tax to TaxCloud failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
+        // A paid invoice clears PAST_DUE.
+        if (subscription && subscription.status === "PAST_DUE") {
+          await prisma.subscription.update({
+            where: { id: subscription.id },
+            data: { status: "ACTIVE" },
+          });
+        }
       }
       break;
     }
