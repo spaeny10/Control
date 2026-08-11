@@ -36,6 +36,7 @@ export default async function EditQuotePage({
         initial={{
           companyId: quote.companyId,
           contactId: quote.contactId,
+          billingContactId: quote.billingContactId,
           projectId: quote.projectId,
           leadId: quote.leadId,
           validUntil: quote.validUntil

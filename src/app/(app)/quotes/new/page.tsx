@@ -20,6 +20,8 @@ export default async function NewQuotePage({
       initial = {
         companyId: lead.companyId,
         contactId: lead.contactId,
+        // Left blank so the builder auto-fills the company's AP contact.
+        billingContactId: null,
         projectId: lead.projectId,
         leadId: lead.id,
         validUntil: null,

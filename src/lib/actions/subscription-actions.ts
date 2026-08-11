@@ -57,10 +57,22 @@ export async function convertQuoteToSubscription(input: {
     include: {
       company: true,
       contact: true,
+      billingContact: true,
       lineItems: true,
       subscriptions: true,
       lead: { select: { ownerId: true, stage: true, estMonths: true } },
-      project: { select: { expectedStart: true, expectedEnd: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          expectedStart: true,
+          expectedEnd: true,
+          siteStreet: true,
+          siteCity: true,
+          siteState: true,
+          siteZip: true,
+        },
+      },
     },
   });
   if (!quote) return { ok: false, error: "Quote not found" };
@@ -69,6 +81,29 @@ export async function convertQuoteToSubscription(input: {
   }
   if (quote.subscriptions.length > 0) {
     return { ok: false, error: "Quote already converted" };
+  }
+
+  /* Sales tax on rental equipment is sourced to where the equipment sits, so a
+     complete delivery address is a billing prerequisite, not a nice-to-have.
+     Street and ZIP specifically — city/state alone can't resolve local rates. */
+  const p = quote.project;
+  const missingSite = !p
+    ? "this quote isn't linked to a job"
+    : [
+        !p.siteStreet && "street",
+        !p.siteCity && "city",
+        !p.siteState && "state",
+        !p.siteZip && "ZIP",
+      ]
+        .filter(Boolean)
+        .join(", ");
+  if (missingSite) {
+    return {
+      ok: false,
+      error: !p
+        ? "This quote isn't linked to a job, so there's no delivery address to bill tax against. Link a job on the quote first."
+        : `The delivery address is missing ${missingSite}. Sales tax is charged where the trailers sit, so add it under Site & schedule before converting.`,
+    };
   }
 
   // All requested trailers must be available.
@@ -113,16 +148,57 @@ export async function convertQuoteToSubscription(input: {
 
   if (stripe) {
     try {
+      /* Invoices must reach accounts payable, not the site contact. Most
+         payments here arrive as checks, so an invoice emailed to the project
+         manager is a slow-paying invoice for a reason nobody thinks to check.
+         Falls back to the site contact only if no AP contact is set. */
+      const invoiceEmail =
+        quote.billingContact?.email ?? quote.contact?.email ?? undefined;
+      const billingAddress = {
+        line1: quote.company.billingStreet ?? undefined,
+        city: quote.company.billingCity ?? undefined,
+        state: quote.company.billingState ?? undefined,
+        postal_code: quote.company.billingZip ?? undefined,
+        country: "US",
+      };
+      /* Shipping is the jobsite. Whatever computes tax — Stripe Tax or an
+         external service like TaxCloud — sources the rate from here, because
+         rental equipment is taxed where it sits, not where the office is. */
+      const shipping = {
+        name: quote.company.name,
+        phone: quote.contact?.phone ?? undefined,
+        address: {
+          line1: p!.siteStreet!,
+          city: p!.siteCity!,
+          state: p!.siteState!,
+          postal_code: p!.siteZip!,
+          country: "US",
+        },
+      };
+
       if (!stripeCustomerId) {
         const customer = await stripe.customers.create({
           name: quote.company.name,
-          email: quote.contact?.email ?? undefined,
+          email: invoiceEmail,
+          address: billingAddress,
+          shipping,
           metadata: { companyId: quote.company.id },
         });
         stripeCustomerId = customer.id;
         await prisma.company.update({
           where: { id: quote.company.id },
           data: { stripeCustomerId },
+        });
+      } else {
+        /* Keep the existing customer current. NOTE: one Stripe customer per
+           company means one shipping address, so a contractor running jobs in
+           two tax jurisdictions will have both invoices sourced from whichever
+           site was written last. Correct handling needs a customer per site (or
+           per-invoice addresses) — deliberately unresolved, see the roadmap. */
+        await stripe.customers.update(stripeCustomerId, {
+          email: invoiceEmail,
+          address: billingAddress,
+          shipping,
         });
       }
 
@@ -182,6 +258,9 @@ export async function convertQuoteToSubscription(input: {
       companyId: quote.companyId,
       projectId: quote.projectId,
       quoteId: quote.id,
+      // Copied so they can change over a long rental without editing the quote.
+      billingContactId: quote.billingContactId,
+      siteContactId: quote.contactId,
       // Commission attribution: the lead owner won this; fall back to
       // whoever converted the quote.
       salespersonId: quote.lead?.ownerId ?? session.user.id,

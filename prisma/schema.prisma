@@ -215,7 +215,11 @@ model Contact {
   updatedAt DateTime @updatedAt
 
   leads  Lead[]
-  quotes Quote[]
+  quotes Quote[] @relation("QuoteSiteContact")
+  // Quotes where this person is accounts payable rather than the site contact.
+  billingQuotes Quote[] @relation("QuoteBillingContact")
+  billingSubscriptions Subscription[] @relation("SubscriptionBillingContact")
+  siteSubscriptions    Subscription[] @relation("SubscriptionSiteContact")
 
   @@index([email])
   @@index([phone])
@@ -422,8 +426,15 @@ model Quote {
   declinedAt     DateTime?
   companyId      String
   company        Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  /* Three distinct roles on a rental, because they're rarely the same person:
+     contact       — the site/ops contact we coordinate delivery with (the PM)
+     billingContact— accounts payable, who receives the invoice and cuts the check
+     the delivery address lives on the linked Project, and is what sales tax is
+     sourced from, since rental equipment is taxed where it sits. */
   contactId      String?
-  contact        Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  contact        Contact?    @relation("QuoteSiteContact", fields: [contactId], references: [id], onDelete: SetNull)
+  billingContactId String?
+  billingContact Contact?    @relation("QuoteBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
   leadId         String?
   lead           Lead?       @relation(fields: [leadId], references: [id], onDelete: SetNull)
   projectId      String?
@@ -503,6 +514,13 @@ model Subscription {
   project              Project?               @relation(fields: [projectId], references: [id], onDelete: SetNull)
   quoteId              String?
   quote                Quote?                 @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  /* Copied from the quote at conversion, then editable — over a long rental the
+     AP clerk changes, and the quote is a signed document we shouldn't rewrite.
+     The invoice email goes to billingContact; the driver calls siteContact. */
+  billingContactId     String?
+  billingContact       Contact?               @relation("SubscriptionBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
+  siteContactId        String?
+  siteContact          Contact?               @relation("SubscriptionSiteContact", fields: [siteContactId], references: [id], onDelete: SetNull)
   // Sales attribution: who won this business (from the lead owner at
   // conversion). Drives commission on active MRR.
   salespersonId        String?

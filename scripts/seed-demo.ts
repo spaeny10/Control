@@ -63,6 +63,22 @@ const PROJECT_KINDS = [
 const FIRST = ["Chris", "Pat", "Sam", "Jordan", "Casey", "Morgan", "Taylor", "Alex", "Riley", "Drew", "Lee", "Jamie"];
 const LAST = ["Miller", "Johnson", "Garcia", "Smith", "Lopez", "Brown", "Davis", "Nguyen", "Clark", "Walker", "Hall", "Young"];
 const SOURCES = ["Referral", "Website inquiry", "Cold call", "Trade show", "Repeat customer", "Google Ads"];
+const SITE_ROADS = [
+  "Industrial Blvd", "Commerce Pkwy", "Airport Rd", "County Line Rd",
+  "Distribution Dr", "Quarry Rd", "Old Dixie Hwy", "Enterprise Ave",
+];
+// Plausible ZIP prefixes per state so the address reads as real.
+const ZIP_PREFIX: Record<string, number> = { FL: 33000, GA: 30000 };
+
+function siteAddress(city: string, state: string) {
+  const zipBase = ZIP_PREFIX[state] ?? 30000;
+  return {
+    siteStreet: `${int(100, 9800)} ${SITE_ROADS[int(0, SITE_ROADS.length - 1)]}`,
+    siteCity: city,
+    siteState: state,
+    siteZip: String(zipBase + int(1, 899)),
+  };
+}
 
 async function main() {
   const fleetCount = await prisma.trailer.count();
@@ -216,8 +232,10 @@ async function main() {
       name,
       companyId: company.id,
       status,
-      siteCity: city,
-      siteState: state,
+      // A full address, because conversion requires one: sales tax on rental
+      // equipment is sourced to where the trailers sit, and street + ZIP are
+      // what resolve a local rate.
+      ...siteAddress(city, state),
       expectedStart,
       expectedEnd,
     });
@@ -423,8 +441,7 @@ async function main() {
           name: `${city} ${kind} #${int(100, 999)}`,
           companyId: company.id,
           status: "UPCOMING",
-          siteCity: city,
-          siteState: state,
+          ...siteAddress(city, state),
           expectedStart: daysAhead(int(7, 90)),
         },
         select: { id: true },

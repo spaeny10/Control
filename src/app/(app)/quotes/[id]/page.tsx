@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { formatDate, formatDateTime, fullName } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
+import { cn } from "@/lib/utils";
 import { quoteTotals } from "@/lib/quote-utils";
 import { Pencil } from "lucide-react";
 
@@ -42,8 +43,18 @@ export default async function QuoteDetailPage({
     include: {
       company: { select: { id: true, name: true } },
       contact: true,
+      billingContact: true,
       lead: { select: { id: true, title: true } },
-      project: { select: { id: true, name: true } },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          siteStreet: true,
+          siteCity: true,
+          siteState: true,
+          siteZip: true,
+        },
+      },
       lineItems: { orderBy: { sortOrder: "asc" } },
       subscriptions: { select: { id: true } },
       // Set only when someone recorded an off-platform acceptance.
@@ -60,6 +71,23 @@ export default async function QuoteDetailPage({
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const publicUrl = `${baseUrl}/q/${quote.publicToken}`;
   const editable = quote.status === "DRAFT" || quote.status === "SENT";
+
+  const sp = quote.project;
+  // Tax needs street and ZIP, so "has a city" isn't good enough to convert.
+  const siteComplete = !!(
+    sp?.siteStreet &&
+    sp?.siteCity &&
+    sp?.siteState &&
+    sp?.siteZip
+  );
+  const siteAddress =
+    [
+      sp?.siteStreet,
+      [sp?.siteCity, sp?.siteState].filter(Boolean).join(", "),
+      sp?.siteZip,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
 
   return (
     <div className="space-y-6">
@@ -159,6 +187,63 @@ export default async function QuoteDetailPage({
                 lineItems={quote.lineItems}
                 totals={totals}
               />
+            </CardContent>
+          </Card>
+
+          {/* The three roles on a rental. Delivery matters twice over: it's
+              where the driver goes, and it's what sales tax is sourced from. */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Contacts &amp; delivery</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid gap-3 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-muted-foreground">Site contact</dt>
+                  <dd className="font-medium">
+                    {quote.contact ? fullName(quote.contact) : "—"}
+                  </dd>
+                  {quote.contact?.phone && (
+                    <dd className="text-xs text-muted-foreground">
+                      {quote.contact.phone}
+                    </dd>
+                  )}
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Accounts payable</dt>
+                  <dd
+                    className={cn(
+                      "font-medium",
+                      !quote.billingContact && "text-destructive"
+                    )}
+                  >
+                    {quote.billingContact
+                      ? fullName(quote.billingContact)
+                      : "not set"}
+                  </dd>
+                  <dd className="text-xs text-muted-foreground">
+                    {quote.billingContact?.email ??
+                      "invoices need a recipient"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Delivery address</dt>
+                  <dd
+                    className={cn(
+                      "font-medium",
+                      !siteComplete && "text-destructive"
+                    )}
+                  >
+                    {siteAddress ?? "not set"}
+                  </dd>
+                  {!siteComplete && (
+                    <dd className="text-xs text-destructive">
+                      Needed to convert — sales tax is charged where the
+                      trailers sit.
+                    </dd>
+                  )}
+                </div>
+              </dl>
             </CardContent>
           </Card>
 

@@ -77,6 +77,7 @@ export function QuoteBuilder({
   initial?: {
     companyId: string;
     contactId: string | null;
+    billingContactId: string | null;
     projectId: string | null;
     leadId: string | null;
     validUntil: string | null;
@@ -89,6 +90,9 @@ export function QuoteBuilder({
   const [isPending, startTransition] = useTransition();
   const [companyId, setCompanyId] = useState(initial?.companyId ?? "");
   const [contactId, setContactId] = useState(initial?.contactId ?? "");
+  const [billingContactId, setBillingContactId] = useState(
+    initial?.billingContactId ?? ""
+  );
   const [projectId, setProjectId] = useState(initial?.projectId ?? "");
   const [leadId, setLeadId] = useState(initial?.leadId ?? "");
   const [validUntil, setValidUntil] = useState(initial?.validUntil ?? "");
@@ -201,11 +205,15 @@ export function QuoteBuilder({
 
   function selectCompany(id: string) {
     setCompanyId(id);
-    if (!contactId) {
+    /* Only the AP slot auto-fills from the company's designated billing
+       contact. The site contact stays blank for the rep to choose — previously
+       one slot served both, so picking the PM silently cost us the AP link and
+       invoices went to the wrong person. */
+    if (!billingContactId) {
       const billing = contacts.find(
         (c) => c.companyId === id && c.isBillingContact
       );
-      if (billing) setContactId(billing.id);
+      if (billing) setBillingContactId(billing.id);
     }
   }
 
@@ -227,6 +235,7 @@ export function QuoteBuilder({
     const payload: QuoteInput = {
       companyId,
       contactId: contactId || null,
+      billingContactId: billingContactId || null,
       projectId: projectId || null,
       leadId: leadId || null,
       validUntil: validUntil || null,
@@ -275,14 +284,14 @@ export function QuoteBuilder({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Contact</Label>
+            <Label>Site contact</Label>
             <Select
               value={contactId}
               onValueChange={setContactId}
               disabled={!companyId}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select contact" />
+                <SelectValue placeholder="Who we coordinate with" />
               </SelectTrigger>
               <SelectContent>
                 {companyContacts.map((c) => (
@@ -293,6 +302,32 @@ export function QuoteBuilder({
                 ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">
+              The PM or super — delivery and pickup calls go here.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Accounts payable</Label>
+            <Select
+              value={billingContactId}
+              onValueChange={setBillingContactId}
+              disabled={!companyId}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Who receives the invoice" />
+              </SelectTrigger>
+              <SelectContent>
+                {companyContacts.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                    {c.isBillingContact ? " (AP)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Invoices are emailed here, so this is who cuts the check.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Project</Label>

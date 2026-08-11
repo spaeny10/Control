@@ -19,7 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, fullName } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { statusBadgeVariant } from "@/lib/badges";
 import { ExternalLink } from "lucide-react";
@@ -37,6 +37,8 @@ export default async function SubscriptionDetailPage({
       where: { id },
       include: {
         company: { select: { id: true, name: true } },
+        billingContact: true,
+        siteContact: true,
         // The Project holds the job site and its planned schedule. There's no
         // Projects page any more, so this is where ops sees and edits them.
         project: {
@@ -320,6 +322,42 @@ export default async function SubscriptionDetailPage({
                   <div>
                     <dt className="text-muted-foreground">Site</dt>
                     <dd className="font-medium">{siteAddress ?? "—"}</dd>
+                  </div>
+                  {/* Who the driver calls vs who gets the invoice — separate
+                      people, and invoices go to the second one. */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <dt className="text-muted-foreground">Site contact</dt>
+                      <dd className="font-medium">
+                        {subscription.siteContact
+                          ? fullName(subscription.siteContact)
+                          : "—"}
+                      </dd>
+                      {subscription.siteContact?.phone && (
+                        <dd className="text-xs text-muted-foreground">
+                          {subscription.siteContact.phone}
+                        </dd>
+                      )}
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">
+                        Accounts payable
+                      </dt>
+                      <dd
+                        className={cn(
+                          "font-medium",
+                          !subscription.billingContact && "text-destructive"
+                        )}
+                      >
+                        {subscription.billingContact
+                          ? fullName(subscription.billingContact)
+                          : "not set"}
+                      </dd>
+                      <dd className="truncate text-xs text-muted-foreground">
+                        {subscription.billingContact?.email ??
+                          "invoices have no recipient"}
+                      </dd>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>

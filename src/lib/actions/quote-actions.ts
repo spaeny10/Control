@@ -21,7 +21,10 @@ const lineItemSchema = z.object({
 const quoteSchema = z
   .object({
     companyId: z.string().min(1, "Company is required"),
+    // Site/ops contact and accounts payable are separate roles — the invoice
+    // goes to the second one, and it's rarely the same person.
     contactId: z.string().optional().nullable(),
+    billingContactId: z.string().optional().nullable(),
     leadId: z.string().optional().nullable(),
     projectId: z.string().optional().nullable(),
     validUntil: z.string().optional().nullable(),
@@ -67,6 +70,7 @@ export async function createQuote(input: QuoteInput): Promise<ActionResult> {
       number: await nextQuoteNumber(),
       companyId: d.companyId,
       contactId: d.contactId || undefined,
+      billingContactId: d.billingContactId || undefined,
       leadId: d.leadId || undefined,
       projectId: d.projectId || undefined,
       validUntil: d.validUntil ? new Date(d.validUntil) : undefined,
@@ -121,6 +125,7 @@ export async function updateQuote(
       data: {
         companyId: d.companyId,
         contactId: d.contactId || null,
+        billingContactId: d.billingContactId || null,
         leadId: d.leadId || null,
         projectId: d.projectId || null,
         validUntil: d.validUntil ? new Date(d.validUntil) : null,
