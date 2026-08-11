@@ -35,58 +35,88 @@ export default async function DispatchPage({
   const weekEnd = addDays(weekStart, 7);
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
-  const [jobs, drivers, activeSubs, pickupsNeeded] = await Promise.all([
-    prisma.dispatchJob.findMany({
-      where: { scheduledFor: { gte: weekStart, lt: weekEnd } },
-      orderBy: { scheduledFor: "asc" },
-      include: {
-        driver: { select: { name: true } },
-        subscription: {
-          include: { company: { select: { name: true } } },
+  const now = new Date();
+  const [jobs, drivers, activeSubs, pickupsNeeded, deliveriesNeeded] =
+    await Promise.all([
+      prisma.dispatchJob.findMany({
+        where: { scheduledFor: { gte: weekStart, lt: weekEnd } },
+        orderBy: { scheduledFor: "asc" },
+        include: {
+          driver: { select: { name: true } },
+          subscription: {
+            include: { company: { select: { name: true } } },
+          },
         },
-      },
-    }),
-    prisma.user.findMany({
-      where: { isActive: true },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true },
-    }),
-    prisma.subscription.findMany({
-      where: { status: { not: "ENDED" } },
-      include: {
-        company: { select: { name: true } },
-        project: { select: { name: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    }),
-    // Projects ending in 30 days whose subscription has no scheduled pickup.
-    prisma.project.findMany({
-      where: {
-        status: "ACTIVE",
-        expectedEnd: {
-          gte: new Date(),
-          lte: addDays(new Date(), 30),
+      }),
+      prisma.user.findMany({
+        where: { isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+      prisma.subscription.findMany({
+        where: { status: { not: "ENDED" } },
+        include: {
+          company: { select: { name: true } },
+          project: { select: { name: true } },
         },
-        subscriptions: {
-          some: {
-            status: { not: "ENDED" },
-            dispatchJobs: {
-              none: { type: "PICKUP", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
+        orderBy: { createdAt: "desc" },
+      }),
+      // Jobs winding down in the next 30 days with no pickup booked yet. The end
+      // date is an estimate, not the customer's word — see the card copy.
+      prisma.project.findMany({
+        where: {
+          status: "ACTIVE",
+          expectedEnd: { gte: now, lte: addDays(now, 30) },
+          subscriptions: {
+            some: {
+              status: { not: "ENDED" },
+              dispatchJobs: {
+                none: {
+                  type: "PICKUP",
+                  status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+                },
+              },
             },
           },
         },
-      },
-      include: {
-        company: { select: { name: true } },
-        subscriptions: {
-          where: { status: { not: "ENDED" } },
-          select: { id: true },
-          take: 1,
+        include: {
+          company: { select: { name: true } },
+          subscriptions: {
+            where: { status: { not: "ENDED" } },
+            select: { id: true },
+            take: 1,
+          },
         },
-      },
-      orderBy: { expectedEnd: "asc" },
-    }),
-  ]);
+        orderBy: { expectedEnd: "asc" },
+        // siteCity/siteState come through on the model itself.
+      }),
+      /* The other half. Converting a quote marks trailers DEPLOYED immediately,
+       but nothing physically moves until someone books a truck — so a new
+       subscription with no delivery on the calendar is a customer waiting on
+       equipment nobody has dispatched.
+
+       Deliberately scoped to recent and upcoming starts: without the date bound
+       this matches every subscription in two years of history that predates
+       dispatch (101 of them), which would bury the handful that are actionable. */
+      prisma.subscription.findMany({
+        where: {
+          status: { not: "ENDED" },
+          startDate: { gte: addDays(now, -14) },
+          dispatchJobs: {
+            none: {
+              type: "DELIVERY",
+              status: { in: ["SCHEDULED", "IN_PROGRESS", "DONE"] },
+            },
+          },
+        },
+        include: {
+          company: { select: { name: true } },
+          project: { select: { name: true, siteCity: true, siteState: true } },
+          _count: { select: { deployments: true } },
+        },
+        orderBy: { startDate: "asc" },
+      }),
+    ]);
 
   const subscriptionOptions = activeSubs.map((s) => ({
     id: s.id,
@@ -126,13 +156,79 @@ export default async function DispatchPage({
         </div>
       </div>
 
+      {/* Trailers owed to a customer. Ahead of pickups because someone is
+          waiting on equipment that the system already counts as deployed. */}
+      {deliveriesNeeded.length > 0 && (
+        <Card className="border-[#2a78d6]/50">
+          <CardHeader>
+            <CardTitle className="text-base">
+              Deliveries to schedule ({deliveriesNeeded.length})
+            </CardTitle>
+            <CardDescription>
+              These jobs started recently and have no delivery on the calendar.
+              Converting a quote marks the trailers deployed straight away, so
+              until a truck is booked the customer is still waiting.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {deliveriesNeeded.map((s) => (
+                <div
+                  key={s.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium">{s.company.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {s.project?.name ?? "No job linked"}
+                      {s.project?.siteCity && ` · ${s.project.siteCity}`}
+                      {s.project?.siteState && `, ${s.project.siteState}`}
+                      {" · starts "}
+                      {formatDate(s.startDate)}
+                      {" · "}
+                      {s._count.deployments > 0 ? (
+                        `${s._count.deployments} unit${s._count.deployments === 1 ? "" : "s"}`
+                      ) : (
+                        <span className="text-destructive">
+                          no units assigned yet
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <JobFormDialog
+                    drivers={drivers}
+                    subscriptions={subscriptionOptions}
+                    triggerLabel="Schedule delivery"
+                    prefill={{
+                      type: "DELIVERY",
+                      subscriptionId: s.id,
+                      // Its start date if that's still ahead of us, otherwise
+                      // tomorrow — it's already overdue.
+                      scheduledFor: format(
+                        s.startDate > now ? s.startDate : addDays(now, 1),
+                        "yyyy-MM-dd'T'09:00",
+                      ),
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {pickupsNeeded.length > 0 && (
         <Card className="border-[#eb6834]/50">
           <CardHeader>
-            <CardTitle className="text-base">Pickups to schedule</CardTitle>
+            <CardTitle className="text-base">
+              Pickups to schedule ({pickupsNeeded.length})
+            </CardTitle>
             <CardDescription>
-              These projects end within 30 days and have no pickup on the
-              calendar yet.
+              These jobs are due to wind down within 30 days with no pickup
+              booked. The end date is our estimate, not the customer&apos;s word
+              — worth a call before you commit a truck. Collecting the trailers
+              doesn&apos;t stop billing; use End subscription on the job for
+              that.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -140,12 +236,18 @@ export default async function DispatchPage({
               {pickupsNeeded.map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-center justify-between py-2 text-sm"
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
                 >
-                  <div>
-                    <p className="font-medium">{p.name}</p>
+                  <div className="min-w-0">
+                    {/* Customer first: a dispatcher thinks "Seminole Paving in
+                        Fort Myers", not "Fort Myers Warehouse Phase 1". */}
+                    <p className="font-medium">{p.company.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      {p.company.name} · ends {formatDate(p.expectedEnd)}
+                      {p.name}
+                      {p.siteCity && ` · ${p.siteCity}`}
+                      {p.siteState && `, ${p.siteState}`}
+                      {" · est. end "}
+                      {formatDate(p.expectedEnd)}
                     </p>
                   </div>
                   {p.subscriptions[0] && (
@@ -177,13 +279,13 @@ export default async function DispatchPage({
               key={day.toISOString()}
               className={cn(
                 "min-h-32 rounded-lg border bg-muted/30 p-2",
-                isToday(day) && "border-primary bg-primary/5"
+                isToday(day) && "border-primary bg-primary/5",
               )}
             >
               <p
                 className={cn(
                   "mb-2 text-xs font-semibold",
-                  isToday(day) ? "text-primary" : "text-muted-foreground"
+                  isToday(day) ? "text-primary" : "text-muted-foreground",
                 )}
               >
                 {format(day, "EEE d")}
