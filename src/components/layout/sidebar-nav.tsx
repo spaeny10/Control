@@ -36,7 +36,10 @@ const SECTIONS: { area: AppArea; label: string; items: NavItem[] }[] = [
       { href: "/leads", label: "Leads", icon: Users },
       { href: "/quotes", label: "Quotes", icon: FileText },
       { href: "/contacts", label: "Contacts", icon: Contact },
-      { href: "/projects", label: "Projects", icon: HardHat },
+      /* No Projects entry: a job you're chasing is a project-track lead, and a
+         job you're on is a subscription. A standalone list showed the same rows
+         twice under a third name. The Project record itself still exists as the
+         spine linking lead → quote → subscription → trailers on site. */
       { href: "/sales", label: "Commissions", icon: BadgeDollarSign },
       { href: "/inbox", label: "Team inbox", icon: Mail, adminOnly: true },
     ],

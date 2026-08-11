@@ -168,14 +168,9 @@ export default async function FleetPage({
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {deployment?.subscription.project ? (
-                        <Link
-                          href={`/projects/${deployment.subscription.project.id}`}
-                          className="hover:underline"
-                        >
-                          {deployment.subscription.project.name}
-                        </Link>
-                      ) : (
+                      {/* Plain text: a fleet-only user has no Accounting area,
+                          so linking through to the job would dead-end. */}
+                      {deployment?.subscription.project?.name ?? (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>

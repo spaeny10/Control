@@ -163,16 +163,11 @@ export default async function TrailerDetailPage({
               <CardContent className="text-sm">
                 <p>
                   <span className="text-muted-foreground">Site: </span>
-                  {currentDeployment.subscription.project ? (
-                    <Link
-                      href={`/projects/${currentDeployment.subscription.project.id}`}
-                      className="font-medium hover:underline"
-                    >
-                      {currentDeployment.subscription.project.name}
-                    </Link>
-                  ) : (
-                    "—"
-                  )}
+                  {/* Plain text — see fleet/page.tsx: fleet users can't reach
+                      the billing side. */}
+                  <span className="font-medium">
+                    {currentDeployment.subscription.project?.name ?? "—"}
+                  </span>
                 </p>
                 <p>
                   <span className="text-muted-foreground">Customer: </span>

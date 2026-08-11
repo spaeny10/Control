@@ -1,11 +1,11 @@
-import { requireArea } from "@/lib/authz";
-
-// Access guard: this whole section requires the SALES area.
-export default async function AreaLayout({
+/* No area guard here. These routes are redirect-only now, and they're reached
+   from Fleet (a trailer's current site) as well as Sales — guarding on SALES
+   would block a fleet user before the redirect could send them somewhere they
+   can actually see. Every destination enforces its own area. */
+export default function AreaLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  await requireArea("SALES");
   return children;
 }

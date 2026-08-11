@@ -8,6 +8,7 @@ import {
   LeadFormDialog,
   type LeadFormData,
 } from "@/components/leads/lead-form-dialog";
+import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -36,7 +37,21 @@ export default async function LeadDetailPage({
       include: {
         company: { select: { id: true, name: true } },
         contact: true,
-        project: { select: { id: true, name: true, status: true } },
+        project: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            companyId: true,
+            siteStreet: true,
+            siteCity: true,
+            siteState: true,
+            siteZip: true,
+            expectedStart: true,
+            expectedEnd: true,
+            notes: true,
+          },
+        },
         owner: { select: { id: true, name: true } },
         quotes: { orderBy: { createdAt: "desc" } },
         // Provenance, both directions: where a project lead came from, and
@@ -95,6 +110,16 @@ export default async function LeadDetailPage({
   };
 
   const isOrganizationLead = lead.type === "NEW_COMPANY";
+  const siteAddress =
+    [
+      lead.project?.siteStreet,
+      [lead.project?.siteCity, lead.project?.siteState]
+        .filter(Boolean)
+        .join(", "),
+      lead.project?.siteZip,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
   const canSpawnProject =
     isOrganizationLead &&
     !!lead.companyId &&
@@ -161,8 +186,20 @@ export default async function LeadDetailPage({
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">Details</CardTitle>
+              {/* Site and schedule live on the job record. Setting the end date
+                  here is what puts the pickup on Dispatch's radar later. */}
+              {lead.project && (
+                <ProjectFormDialog
+                  project={lead.project}
+                  companies={[]}
+                  fixedCompanyId={lead.project.companyId}
+                  triggerLabel="Site & schedule"
+                  title="Site & schedule"
+                  hideName
+                />
+              )}
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
@@ -213,17 +250,26 @@ export default async function LeadDetailPage({
                   <dd className="font-medium">{formatDate(lead.createdAt)}</dd>
                 </div>
                 {lead.project && (
-                  <div>
-                    <dt className="text-muted-foreground">Project</dt>
-                    <dd className="font-medium">
-                      <Link
-                        href={`/projects/${lead.project.id}`}
-                        className="hover:underline"
-                      >
-                        {lead.project.name}
-                      </Link>
-                    </dd>
-                  </div>
+                  <>
+                    <div>
+                      <dt className="text-muted-foreground">Job</dt>
+                      <dd className="font-medium">{lead.project.name}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Site</dt>
+                      <dd className="font-medium">{siteAddress ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Job runs</dt>
+                      <dd className="font-medium">
+                        {lead.project.expectedStart || lead.project.expectedEnd
+                          ? `${formatDate(lead.project.expectedStart) || "?"} → ${
+                              formatDate(lead.project.expectedEnd) || "?"
+                            }`
+                          : "—"}
+                      </dd>
+                    </div>
+                  </>
                 )}
                 {lead.sourceLead && (
                   <div>

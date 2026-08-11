@@ -59,7 +59,8 @@ export async function convertQuoteToSubscription(input: {
       contact: true,
       lineItems: true,
       subscriptions: true,
-      lead: { select: { ownerId: true, stage: true } },
+      lead: { select: { ownerId: true, stage: true, estMonths: true } },
+      project: { select: { expectedStart: true, expectedEnd: true } },
     },
   });
   if (!quote) return { ok: false, error: "Quote not found" };
@@ -200,10 +201,27 @@ export async function convertQuoteToSubscription(input: {
     );
   }
   if (quote.projectId) {
+    /* Projects created from a lead carry no dates, and dispatch's
+       pickups-to-schedule queue only sees ACTIVE jobs with an expectedEnd — so
+       without this the job would go live and never surface for pickup. The
+       lead's estimated rental length is the best available forecast; ops can
+       correct it from the subscription's Site & schedule card. */
+    const startDate = new Date();
+    const months = quote.lead?.estMonths ?? null;
+    const derivedEnd =
+      !quote.project?.expectedEnd && months
+        ? new Date(
+            new Date(startDate).setMonth(startDate.getMonth() + months)
+          )
+        : null;
     ops.push(
       prisma.project.update({
         where: { id: quote.projectId },
-        data: { status: "ACTIVE" },
+        data: {
+          status: "ACTIVE",
+          ...(quote.project?.expectedStart ? {} : { expectedStart: startDate }),
+          ...(derivedEnd ? { expectedEnd: derivedEnd } : {}),
+        },
       })
     );
   }

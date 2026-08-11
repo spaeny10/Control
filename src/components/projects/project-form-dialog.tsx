@@ -48,10 +48,20 @@ export function ProjectFormDialog({
   project,
   companies,
   fixedCompanyId,
+  triggerLabel,
+  title,
+  hideName,
 }: {
   project?: ProjectValues;
   companies: { id: string; name: string }[];
   fixedCompanyId?: string;
+  /** Override the trigger/dialog copy. The Projects area is retired, so this
+      form is mounted on the lead and subscription pages as "Site & schedule" —
+      users shouldn't have to think about a Project record. */
+  triggerLabel?: string;
+  title?: string;
+  /** The job name is already the page heading in those contexts. */
+  hideName?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -76,29 +86,35 @@ export function ProjectFormDialog({
       <DialogTrigger asChild>
         {isEdit ? (
           <Button variant="outline" size="sm" className="gap-1">
-            <Pencil className="h-3.5 w-3.5" /> Edit
+            <Pencil className="h-3.5 w-3.5" /> {triggerLabel ?? "Edit"}
           </Button>
         ) : (
           <Button className="gap-1">
-            <Plus className="h-4 w-4" /> New project
+            <Plus className="h-4 w-4" /> {triggerLabel ?? "New project"}
           </Button>
         )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit project" : "New project"}</DialogTitle>
+          <DialogTitle>
+            {title ?? (isEdit ? "Edit project" : "New project")}
+          </DialogTitle>
         </DialogHeader>
         <form action={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Project name *</Label>
-            <Input
-              id="name"
-              name="name"
-              required
-              placeholder="I-95 Overpass Phase 2"
-              defaultValue={project?.name ?? ""}
-            />
-          </div>
+          {hideName ? (
+            <input type="hidden" name="name" value={project?.name ?? ""} />
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="name">Job name *</Label>
+              <Input
+                id="name"
+                name="name"
+                required
+                placeholder="I-95 Overpass Phase 2"
+                defaultValue={project?.name ?? ""}
+              />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Company *</Label>
@@ -124,7 +140,9 @@ export function ProjectFormDialog({
               )}
             </div>
             <div className="space-y-2">
-              <Label>Status</Label>
+              {/* Distinct from billing status: this is whether trailers are
+                  wanted on site, and it gates the dispatch pickup queue. */}
+              <Label>Job status</Label>
               <Select name="status" defaultValue={project?.status ?? "UPCOMING"}>
                 <SelectTrigger>
                   <SelectValue />

@@ -138,14 +138,9 @@ export default async function SubscriptionsPage({
                     </Link>
                   </TableCell>
                   <TableCell>
-                    {s.project ? (
-                      <Link
-                        href={`/projects/${s.project.id}`}
-                        className="hover:underline"
-                      >
-                        {s.project.name}
-                      </Link>
-                    ) : (
+                    {/* The row already links to the subscription, which is now
+                        the job's page. */}
+                    {s.project?.name ?? (
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>

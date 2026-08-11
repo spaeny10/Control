@@ -66,12 +66,28 @@ export async function updateProject(
   const project = await prisma.project.update({
     where: { id },
     data: toData(parsed.data),
-    include: { company: { select: { name: true } } },
+    include: {
+      company: { select: { name: true } },
+      leads: { select: { id: true }, orderBy: { createdAt: "desc" } },
+      subscriptions: {
+        select: { id: true },
+        orderBy: [{ endedAt: "asc" }, { startDate: "desc" }],
+      },
+    },
   });
 
   if (before) {
+    /* Log where someone will actually read it. There's no Projects page any
+       more, so a projectId-parented message would be invisible — attach it to
+       the subscription if we're on site, otherwise the lead. */
+    const auditParent =
+      project.subscriptions[0]
+        ? { subscriptionId: project.subscriptions[0].id }
+        : project.leads[0]
+          ? { leadId: project.leads[0].id }
+          : { projectId: id };
     await logChanges({
-      parent: { projectId: id },
+      parent: auditParent,
       authorId: session.user.id,
       before: { ...before, companyName: before.company?.name ?? null },
       after: { ...project, companyName: project.company?.name ?? null },
@@ -96,9 +112,16 @@ export async function updateProject(
     });
   }
 
-  revalidatePath("/projects");
-  revalidatePath(`/projects/${id}`);
+  /* The Projects pages are retired, so job data is edited from wherever it's
+     shown: the lead while we're chasing it, the subscription once we're on
+     site, plus dispatch and the dashboard, which forecast off expectedEnd. */
+  revalidatePath("/leads");
+  revalidatePath("/subscriptions");
+  revalidatePath("/dispatch");
+  revalidatePath("/");
   revalidatePath(`/companies/${project.companyId}`);
+  for (const l of project.leads) revalidatePath(`/leads/${l.id}`);
+  for (const s of project.subscriptions) revalidatePath(`/subscriptions/${s.id}`);
   return { ok: true, id };
 }
 

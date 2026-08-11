@@ -1,189 +1,52 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
-import { Chatter } from "@/components/chatter/chatter";
-import { ActivitiesCard } from "@/components/activities/activities-card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { formatDate } from "@/lib/format";
-import { statusBadgeVariant } from "@/lib/badges";
+import { getUserAreas } from "@/lib/authz";
 
-export const metadata = { title: "Project" };
+/* The Projects area was retired: a job you're chasing is a project-track lead,
+   a job you're on is a subscription, and a standalone Project page showed the
+   same rows a third time. The route survives only to forward old links —
+   there are a dozen across the app plus any Gmail thread anchored on a
+   project — so nothing 404s.
 
-export default async function ProjectDetailPage({
+   Destination is area-aware: sending a Sales-only rep to /subscriptions would
+   just bounce them off the Accounting guard. */
+export default async function ProjectRedirect({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const project = await prisma.project.findUnique({
-    where: { id },
-    include: {
-      company: { select: { id: true, name: true } },
-      leads: { orderBy: { createdAt: "desc" } },
-      subscriptions: {
-        orderBy: { createdAt: "desc" },
-        include: {
-          deployments: {
-            where: { returnedAt: null },
-            include: { trailer: { select: { unitNumber: true } } },
-          },
+  const [project, { isAdmin, areas }] = await Promise.all([
+    prisma.project.findUnique({
+      where: { id },
+      select: {
+        companyId: true,
+        subscriptions: {
+          orderBy: [{ endedAt: "asc" }, { startDate: "desc" }],
+          select: { id: true },
+          take: 1,
+        },
+        leads: {
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+          take: 1,
         },
       },
-      messages: {
-        orderBy: { createdAt: "desc" },
-        include: { author: { select: { name: true } } },
-      },
-    },
-  });
-  if (!project) notFound();
+    }),
+    getUserAreas(),
+  ]);
 
-  const site = [
-    project.siteStreet,
-    [project.siteCity, project.siteState, project.siteZip]
-      .filter(Boolean)
-      .join(", "),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  if (!project) redirect("/");
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
-              {project.name}
-            </h1>
-            <Badge variant={statusBadgeVariant(project.status)}>
-              {project.status}
-            </Badge>
-          </div>
-          <p className="text-muted-foreground">
-            <Link
-              href={`/companies/${project.company.id}`}
-              className="hover:underline"
-            >
-              {project.company.name}
-            </Link>
-            {site && ` · ${site}`}
-          </p>
-          {project.expectedStart && (
-            <p className="text-sm text-muted-foreground">
-              {formatDate(project.expectedStart)} →{" "}
-              {formatDate(project.expectedEnd)}
-            </p>
-          )}
-        </div>
-        <ProjectFormDialog
-          project={{
-            id: project.id,
-            name: project.name,
-            companyId: project.companyId,
-            status: project.status,
-            siteStreet: project.siteStreet,
-            siteCity: project.siteCity,
-            siteState: project.siteState,
-            siteZip: project.siteZip,
-            expectedStart: project.expectedStart,
-            expectedEnd: project.expectedEnd,
-            notes: project.notes,
-          }}
-          companies={[]}
-          fixedCompanyId={project.companyId}
-        />
-      </div>
+  const can = (area: "SALES" | "ACCOUNTING") => isAdmin || areas.includes(area);
+  const subscriptionId = project.subscriptions[0]?.id;
+  const leadId = project.leads[0]?.id;
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Subscriptions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {project.subscriptions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No subscriptions on this project yet.
-                </p>
-              ) : (
-                <div className="divide-y">
-                  {project.subscriptions.map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex items-center justify-between py-2"
-                    >
-                      <div>
-                        <Link
-                          href={`/subscriptions/${s.id}`}
-                          className="text-sm font-medium hover:underline"
-                        >
-                          Subscription · started {formatDate(s.startDate)}
-                        </Link>
-                        <p className="text-xs text-muted-foreground">
-                          {s.deployments.length > 0
-                            ? `Units on site: ${s.deployments
-                                .map((d) => d.trailer.unitNumber)
-                                .join(", ")}`
-                            : "No trailers deployed"}
-                        </p>
-                      </div>
-                      <Badge variant={statusBadgeVariant(s.status)}>
-                        {s.status}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {project.leads.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Leads</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="divide-y">
-                  {project.leads.map((l) => (
-                    <div
-                      key={l.id}
-                      className="flex items-center justify-between py-2"
-                    >
-                      <Link
-                        href={`/leads/${l.id}`}
-                        className="text-sm font-medium hover:underline"
-                      >
-                        {l.title}
-                      </Link>
-                      <Badge variant={statusBadgeVariant(l.stage)}>
-                        {l.stage.replace("_", " ")}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        <div className="space-y-6">
-          <ActivitiesCard
-            parent={{ projectId: project.id }}
-            revalidate={`/projects/${project.id}`}
-          />
-          <Chatter
-            messages={project.messages}
-            parent={{ projectId: project.id }}
-            revalidate={`/projects/${project.id}`}
-          />
-        </div>
-      </div>
-    </div>
-  );
+  // On the job → the subscription is the operational record. Still chasing it,
+  // or the viewer can't see billing → the lead.
+  if (subscriptionId && can("ACCOUNTING")) redirect(`/subscriptions/${subscriptionId}`);
+  if (leadId && can("SALES")) redirect(`/leads/${leadId}`);
+  if (can("SALES")) redirect(`/companies/${project.companyId}`);
+  if (subscriptionId) redirect(`/subscriptions/${subscriptionId}`);
+  redirect("/");
 }
