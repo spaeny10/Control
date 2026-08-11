@@ -11,7 +11,10 @@ export const authConfig = {
       const isPublic =
         nextUrl.pathname.startsWith("/login") ||
         nextUrl.pathname.startsWith("/q/") ||
-        nextUrl.pathname.startsWith("/portal/");
+        nextUrl.pathname.startsWith("/portal/") ||
+        // The offline fallback must render without a session, otherwise a
+        // logged-out-while-offline user gets a redirect loop.
+        nextUrl.pathname === "/offline";
       if (isPublic) return true;
       return isLoggedIn;
     },
