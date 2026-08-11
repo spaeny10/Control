@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { Chatter } from "@/components/chatter/chatter";
 import { SendQuoteButton } from "@/components/quotes/send-quote-button";
 import { CopyLinkButton } from "@/components/quotes/copy-link-button";
+import { RecordAcceptanceDialog } from "@/components/quotes/record-acceptance-dialog";
+import { auth } from "@/lib/auth";
 import { QuoteLineItemsTable } from "@/components/quotes/quote-line-items-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,12 +22,21 @@ import { Pencil } from "lucide-react";
 
 export const metadata = { title: "Quote" };
 
+const ACCEPTANCE_LABEL: Record<string, string> = {
+  PHONE: "by phone",
+  EMAIL: "by email",
+  SIGNED_DOCUMENT: "on a signed document",
+  IN_PERSON: "in person",
+};
+
 export default async function QuoteDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const session = await auth();
+  const isAdmin = session?.user?.role === "ADMIN";
   const quote = await prisma.quote.findUnique({
     where: { id },
     include: {
@@ -35,6 +46,8 @@ export default async function QuoteDetailPage({
       project: { select: { id: true, name: true } },
       lineItems: { orderBy: { sortOrder: "asc" } },
       subscriptions: { select: { id: true } },
+      // Set only when someone recorded an off-platform acceptance.
+      acceptedByUser: { select: { name: true } },
       messages: {
         orderBy: { createdAt: "desc" },
         include: { author: { select: { name: true } } },
@@ -75,6 +88,20 @@ export default async function QuoteDetailPage({
             <p className="text-sm font-medium text-green-700">
               Accepted by {quote.acceptedByName} on{" "}
               {formatDateTime(quote.acceptedAt)}
+              {/* Say plainly which acceptances were customer-clicked and which
+                  a team member recorded on their behalf. */}
+              {quote.acceptedVia && quote.acceptedVia !== "ONLINE" && (
+                <span className="font-normal text-muted-foreground">
+                  {" · "}
+                  {ACCEPTANCE_LABEL[quote.acceptedVia]}, recorded by{" "}
+                  {quote.acceptedByUser?.name ?? "a team member"}
+                </span>
+              )}
+              {quote.acceptedVia === "ONLINE" && (
+                <span className="font-normal text-muted-foreground">
+                  {" · accepted online"}
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -93,6 +120,16 @@ export default async function QuoteDetailPage({
               />
             </>
           )}
+          {/* Off-platform acceptance. EXPIRED is included because a quote
+              lapsing while the customer decided is exactly the common case. */}
+          {isAdmin &&
+            (quote.status === "SENT" || quote.status === "EXPIRED") && (
+              <RecordAcceptanceDialog
+                quoteId={quote.id}
+                defaultName={quote.contact ? fullName(quote.contact) : null}
+                wasExpired={quote.status === "EXPIRED"}
+              />
+            )}
           {quote.status === "ACCEPTED" &&
             quote.subscriptions.length === 0 && (
               <Button asChild className="gap-1">

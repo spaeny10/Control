@@ -138,6 +138,7 @@ model User {
   messages      Message[]
   dispatchJobs  DispatchJob[]  @relation("JobDriver")
   subscriptions Subscription[] @relation("SubscriptionSalesperson")
+  recordedAcceptances Quote[]  @relation("QuoteAcceptanceRecorder")
 }
 
 model SalesTeam {
@@ -389,6 +390,17 @@ model MaintenanceLog {
 
 // ---------- Quotes ----------
 
+// Construction customers accept by phone or a signed PDF as often as online,
+// and conversion to a subscription requires an accepted quote — so the app has
+// to be able to record those without pretending they were clicked.
+enum QuoteAcceptanceMethod {
+  ONLINE
+  PHONE
+  EMAIL
+  SIGNED_DOCUMENT
+  IN_PERSON
+}
+
 model Quote {
   id             String      @id @default(cuid())
   number         String      @unique // Q-2026-0001
@@ -399,7 +411,14 @@ model Quote {
   sentAt         DateTime?
   acceptedAt     DateTime?
   acceptedByName String?
+  // Only set when the customer clicked Accept themselves.
   acceptedIp     String?
+  // How the customer said yes. ONLINE means they used the public link; anything
+  // else was recorded on their behalf by the user in acceptedByUser, so the
+  // audit trail never implies a signature that didn't happen.
+  acceptedVia    QuoteAcceptanceMethod?
+  acceptedByUserId String?
+  acceptedByUser   User?  @relation("QuoteAcceptanceRecorder", fields: [acceptedByUserId], references: [id], onDelete: SetNull)
   declinedAt     DateTime?
   companyId      String
   company        Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)

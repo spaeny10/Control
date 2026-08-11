@@ -8,6 +8,7 @@ import { headers } from "next/headers";
 import type { ActionResult } from "./company-actions";
 import { isGmailConfigured, sendEmailAs } from "@/lib/google/gmail";
 import { formatCurrency } from "@/lib/format";
+import type { QuoteAcceptanceMethod } from "@prisma/client";
 
 const lineItemSchema = z.object({
   cycle: z.enum(["ONE_TIME", "DAILY", "WEEKLY", "EVERY_28_DAYS", "MONTHLY"]),
@@ -316,6 +317,121 @@ export async function sendQuote(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+const METHOD_LABEL: Record<QuoteAcceptanceMethod, string> = {
+  ONLINE: "online",
+  PHONE: "by phone",
+  EMAIL: "by email",
+  SIGNED_DOCUMENT: "on a signed document",
+  IN_PERSON: "in person",
+};
+
+/* Record an acceptance that happened off-platform. Conversion to a subscription
+   requires an ACCEPTED quote, and until now only the customer clicking the
+   public link could produce one — so a PM who accepted over the phone left the
+   deal unconvertible. Deliberately does NOT set acceptedIp: nobody clicked
+   anything, and the chatter names the user who recorded it so this can never be
+   mistaken for a customer signature. */
+export async function recordQuoteAcceptance(
+  quoteId: string,
+  formData: FormData
+): Promise<ActionResult> {
+  const session = await auth();
+  if (session?.user?.role !== "ADMIN")
+    return { ok: false, error: "Admin only" };
+
+  const name = String(formData.get("acceptedByName") ?? "").trim();
+  if (!name)
+    return { ok: false, error: "Who at the customer accepted it?" };
+
+  const method = String(formData.get("acceptedVia") ?? "");
+  const VALID: QuoteAcceptanceMethod[] = [
+    "PHONE",
+    "EMAIL",
+    "SIGNED_DOCUMENT",
+    "IN_PERSON",
+  ];
+  if (!VALID.includes(method as QuoteAcceptanceMethod)) {
+    return { ok: false, error: "Pick how the customer accepted" };
+  }
+  const acceptedVia = method as QuoteAcceptanceMethod;
+
+  const rawDate = String(formData.get("acceptedAt") ?? "").trim();
+  const acceptedAt = rawDate ? new Date(rawDate) : new Date();
+  if (Number.isNaN(acceptedAt.getTime()))
+    return { ok: false, error: "Invalid acceptance date" };
+  if (acceptedAt.getTime() > Date.now() + 86_400_000)
+    return { ok: false, error: "Acceptance date can't be in the future" };
+
+  const quote = await prisma.quote.findUnique({
+    where: { id: quoteId },
+    select: { id: true, number: true, status: true, leadId: true },
+  });
+  if (!quote) return { ok: false, error: "Quote not found" };
+  if (quote.status === "ACCEPTED") return { ok: true, id: quoteId };
+  // EXPIRED is allowed: a quote lapsing while the customer thought about it is
+  // exactly the case this exists for. DRAFT isn't — send it first.
+  if (quote.status !== "SENT" && quote.status !== "EXPIRED") {
+    return {
+      ok: false,
+      error: `A ${quote.status.toLowerCase()} quote can't be accepted — send it first.`,
+    };
+  }
+
+  const note = String(formData.get("note") ?? "").trim();
+  const body =
+    `Marked accepted by ${session.user.name ?? "a team member"} — ` +
+    `${name} confirmed ${METHOD_LABEL[acceptedVia]}` +
+    (quote.status === "EXPIRED" ? " (quote had expired)" : "") +
+    (note ? ` — "${note}"` : "");
+
+  await prisma.$transaction([
+    prisma.quote.update({
+      where: { id: quoteId },
+      data: {
+        status: "ACCEPTED",
+        acceptedAt,
+        acceptedByName: name,
+        acceptedVia,
+        acceptedByUserId: session.user.id,
+      },
+    }),
+    prisma.message.create({
+      data: {
+        channel: "SYSTEM",
+        body,
+        authorId: session.user.id,
+        quoteId,
+      },
+    }),
+    // Same as an online acceptance: the customer said yes, so the lead is won.
+    ...(quote.leadId
+      ? [
+          prisma.message.create({
+            data: {
+              channel: "SYSTEM",
+              body: `Quote ${quote.number} — ${body.charAt(0).toLowerCase()}${body.slice(1)}`,
+              authorId: session.user.id,
+              leadId: quote.leadId,
+            },
+          }),
+          prisma.lead.update({
+            where: { id: quote.leadId },
+            data: { stage: "WON", closedAt: acceptedAt, lostReason: null },
+          }),
+        ]
+      : []),
+  ]);
+
+  revalidatePath(`/quotes/${quoteId}`);
+  revalidatePath("/quotes");
+  if (quote.leadId) {
+    revalidatePath("/leads");
+    revalidatePath(`/leads/${quote.leadId}`);
+  }
+  revalidatePath("/");
+  return { ok: true, id: quoteId };
+}
+
 // ---- Public actions (no auth — reached from /q/[token]) ----
 
 export async function acceptQuote(
@@ -355,6 +471,7 @@ export async function acceptQuote(
         acceptedAt: new Date(),
         acceptedByName: name,
         acceptedIp: ip,
+        acceptedVia: "ONLINE",
       },
     }),
     prisma.message.create({
