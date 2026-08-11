@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/format";
+import { OPEN_PIPELINE_STAGES } from "@/lib/lead-tracks";
 import { startOfMonth, subMonths, endOfMonth, format } from "date-fns";
 
 export const metadata = { title: "Sales" };
@@ -72,9 +73,19 @@ export default async function SalesPage() {
       where: { done: true, completedAt: { gte: weekAgo } },
       _count: true,
     }),
+    /* Carries track and stage so the forecast split, the prospecting counts,
+       and the unqualified backlog all come from one query. reps x 2 types x 4
+       open stages is trivially small. */
     prisma.lead.groupBy({
-      by: ["ownerId"],
-      where: { stage: { notIn: ["WON", "LOST"] } },
+      by: ["ownerId", "type", "stage"],
+      where: {
+        OR: [
+          { type: "NEW_PROJECT", stage: { notIn: ["WON", "LOST"] } },
+          // All stages on the organization track — vendor approval is the win
+          // there, so closed ones still represent live relationship value.
+          { type: "NEW_COMPANY" },
+        ],
+      },
       _count: true,
       _sum: { estValue: true, estMrr: true },
     }),
@@ -106,7 +117,25 @@ export default async function SalesPage() {
           s.startDate <= lastMonthEnd
       )
       .reduce((sum, s) => sum + Number(s.mrr), 0);
-    const leadRow = openLeads.find((l) => l.ownerId === u.id);
+    // Money comes only from project-track forecast rows, so a stray estMrr on
+    // an organization lead is structurally unreachable from these figures.
+    const myLeads = openLeads.filter((l) => l.ownerId === u.id);
+    const projectForecast = myLeads.filter(
+      (l) => l.type === "NEW_PROJECT" && OPEN_PIPELINE_STAGES.includes(l.stage)
+    );
+    // Active conversations plus approved vendors — the relationship footprint.
+    const orgLeads = myLeads.filter(
+      (l) =>
+        l.type === "NEW_COMPANY" &&
+        (OPEN_PIPELINE_STAGES.includes(l.stage) || l.stage === "WON")
+    );
+    const unqualified = myLeads.filter(
+      (l) => l.type === "NEW_PROJECT" && l.stage === "UNQUALIFIED"
+    );
+    const sum = (
+      rows: typeof myLeads,
+      pick: (r: (typeof myLeads)[number]) => unknown
+    ) => rows.reduce((s, r) => s + Number(pick(r) ?? 0), 0);
     return {
       id: u.id,
       name: u.name,
@@ -120,21 +149,26 @@ export default async function SalesPage() {
       openActivities: countBy(openActivities, u.id),
       overdueActivities: countBy(overdueActivities, u.id),
       completedThisWeek: countBy(completedThisWeek, u.id),
-      openLeadCount: leadRow?._count ?? 0,
-      openPipeline: leadRow?._sum.estValue ? Number(leadRow._sum.estValue) : 0,
-      openPipelineMrr: leadRow?._sum.estMrr
-        ? Number(leadRow._sum.estMrr)
-        : 0,
+      projectLeadCount: projectForecast.reduce((s, r) => s + r._count, 0),
+      projectPipelineMrr: sum(projectForecast, (r) => r._sum.estMrr),
+      // Prospecting is counted, never dollarized.
+      orgLeadCount: orgLeads.reduce((s, r) => s + r._count, 0),
+      unqualifiedCount: unqualified.reduce((s, r) => s + r._count, 0),
     };
   });
 
+  // Counts all three lead buckets, not just the forecast — otherwise a rep
+  // doing pure early-stage prospecting would silently vanish from the team
+  // view, which is exactly the wrong incentive under a two-track model.
   const activeReps = reps.filter(
     (r) =>
       r.activeMrr > 0 ||
       r.rate > 0 ||
       r.team ||
       r.openActivities > 0 ||
-      r.openLeadCount > 0 ||
+      r.projectLeadCount > 0 ||
+      r.orgLeadCount > 0 ||
+      r.unqualifiedCount > 0 ||
       r.completedThisWeek > 0
   );
 
@@ -205,7 +239,8 @@ export default async function SalesPage() {
           <CardTitle className="text-base">Team activity</CardTitle>
           <CardDescription>
             Effort feeding the pipeline: planned work, overdue items, and what
-            got done in the last 7 days. Click a rep for their full breakdown.
+            got done in the last 7 days. Organization leads are counted, not
+            forecast — they carry no MRR. Click a rep for their full breakdown.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -216,9 +251,9 @@ export default async function SalesPage() {
                 <TableHead className="text-right">Open activities</TableHead>
                 <TableHead className="text-right">Overdue</TableHead>
                 <TableHead className="text-right">Done (7d)</TableHead>
-                <TableHead className="text-right">Open leads</TableHead>
-                <TableHead className="text-right">Pipeline MRR</TableHead>
-                <TableHead className="text-right">Pipeline total</TableHead>
+                <TableHead className="text-right">Project leads</TableHead>
+                <TableHead className="text-right">Project pipeline</TableHead>
+                <TableHead className="text-right">Organizations</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -249,13 +284,19 @@ export default async function SalesPage() {
                     {rep.completedThisWeek}
                   </TableCell>
                   <TableCell className="text-right">
-                    {rep.openLeadCount}
+                    {rep.projectLeadCount}
+                    {rep.unqualifiedCount > 0 && (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        +{rep.unqualifiedCount} unqual.
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    {formatCurrency(rep.openPipelineMrr)}/mo
+                    {formatCurrency(rep.projectPipelineMrr)}/mo
                   </TableCell>
+                  {/* Count only — prospecting is never dollarized. */}
                   <TableCell className="text-right text-muted-foreground">
-                    {formatCurrency(rep.openPipeline)}
+                    {rep.orgLeadCount}
                   </TableCell>
                   <TableCell className="text-right">
                     <Link

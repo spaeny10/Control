@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { logChanges } from "@/lib/audit";
 import type { ActionResult } from "./company-actions";
 
 const trailerSchema = z.object({
@@ -47,7 +48,24 @@ export async function updateTrailer(
     return { ok: false, error: parsed.error.issues[0].message };
   }
 
+  const before = await prisma.trailer.findUnique({ where: { id } });
+
   await prisma.trailer.update({ where: { id }, data: parsed.data });
+
+  if (before) {
+    await logChanges({
+      parent: { trailerId: id },
+      authorId: session.user.id,
+      before,
+      after: { ...before, ...parsed.data },
+      fields: {
+        unitNumber: { label: "Unit number" },
+        model: { label: "Model" },
+        notes: { label: "Notes" },
+      },
+    });
+  }
+
   revalidatePath("/fleet");
   revalidatePath(`/fleet/${id}`);
   return { ok: true, id };

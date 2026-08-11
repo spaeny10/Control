@@ -3,7 +3,7 @@ type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
 
 const map: Record<string, BadgeVariant> = {
   // Lead stages
-  NEW: "secondary",
+  UNQUALIFIED: "outline",
   CONTACTED: "secondary",
   QUALIFIED: "default",
   QUOTE_SENT: "default",

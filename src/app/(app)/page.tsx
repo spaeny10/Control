@@ -20,7 +20,10 @@ import {
 } from "@/components/activities/activity-row";
 import { FilterPills } from "@/components/layout/filter-pills";
 import { getUnansweredThreads } from "@/lib/email-oversight";
+import { getStalledQuoteLeads } from "@/lib/quote-oversight";
 import { UnansweredCard } from "@/components/dashboard/unanswered-card";
+import { StalledQuotesCard } from "@/components/dashboard/stalled-quotes-card";
+import { ProspectingCard } from "@/components/dashboard/prospecting-card";
 import {
   CircleDollarSign,
   Repeat,
@@ -60,9 +63,17 @@ export default async function DashboardPage({
   const isAdmin = session?.user?.role === "ADMIN";
 
   const [
-    { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions },
+    {
+      stats,
+      prospecting,
+      mrrTrend,
+      movement,
+      leadsByMonth,
+      upcomingCompletions,
+    },
     myActivities,
     unanswered,
+    stalledQuotes,
   ] = await Promise.all([
     getDashboardData(months, repId),
     prisma.activity.findMany({
@@ -82,6 +93,8 @@ export default async function DashboardPage({
     // Admins see the whole team's waiting customers; members see their own.
     // A rep filter narrows it to that rep either way.
     getUnansweredThreads(repId ?? (isAdmin ? undefined : session?.user?.id)),
+    // Same scoping rule as the unanswered card.
+    getStalledQuoteLeads(repId ?? (isAdmin ? undefined : session?.user?.id)),
   ]);
 
   const now = new Date();
@@ -141,16 +154,19 @@ export default async function DashboardPage({
           tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
         },
     {
-      label: "Pipeline MRR",
-      value: `${formatCurrency(stats.pipelineMrr)}/mo`,
-      sub: `${formatCurrency(stats.pipelineValue)} total · ${stats.openLeadCount} leads`,
+      label: "Project pipeline",
+      value: `${formatCurrency(stats.projectPipelineMrr)}/mo`,
+      // The exclusion split is the most useful thing on this tile — it answers
+      // "what isn't in this number?", which is the point of the two-track model.
+      sub: `${stats.projectPipelineCount} qualified · ${stats.projectUnqualifiedCount} unqualified`,
       icon: Target,
       tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
     {
-      label: "Win rate",
-      value: stats.winRate !== null ? `${stats.winRate}%` : "—",
-      sub: "won vs lost leads",
+      label: "Quote win rate",
+      value:
+        stats.projectWinRate !== null ? `${stats.projectWinRate}%` : "—",
+      sub: `${stats.projectWonCount} won / ${stats.projectLostCount} lost · ${stats.winRateWindowMonths} mo`,
       icon: Trophy,
       tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
@@ -256,7 +272,15 @@ export default async function DashboardPage({
         ))}
       </div>
 
+      {/* Alerts first, then information. */}
       <UnansweredCard threads={unanswered} showRep={isAdmin && !repId} />
+
+      <StalledQuotesCard
+        leads={stalledQuotes}
+        showRep={isAdmin && !repId}
+      />
+
+      <ProspectingCard funnel={prospecting} ownerId={repId} />
 
       {activityViews.length > 0 && (
         <Card>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createLead } from "@/lib/actions/lead-actions";
+import { createLead, updateLead } from "@/lib/actions/lead-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,27 +22,92 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
+
+export type LeadFormData = {
+  id: string;
+  title: string;
+  type: "NEW_COMPANY" | "NEW_PROJECT";
+  companyId: string | null;
+  contactId: string | null;
+  ownerId: string | null;
+  estMrr: number | null;
+  estMonths: number | null;
+  estValue: number | null;
+  source: string | null;
+  expectedClose: Date | null;
+};
 
 export function LeadFormDialog({
   companies,
   contacts,
+  users,
+  lead,
+  presetType,
+  presetCompanyId,
+  sourceLeadId,
+  triggerLabel,
 }: {
   companies: { id: string; name: string }[];
   contacts: { id: string; name: string; companyId: string }[];
+  users?: { id: string; name: string }[];
+  lead?: LeadFormData;
+  /** Locks the track and hides the type tabs (used by the spawn flow). */
+  presetType?: "NEW_COMPANY" | "NEW_PROJECT";
+  presetCompanyId?: string;
+  /** The organization lead this project lead is being spawned from. */
+  sourceLeadId?: string;
+  triggerLabel?: string;
 }) {
+  const isEdit = !!lead;
   const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(lead?.title ?? "");
   const [type, setType] = useState<"NEW_COMPANY" | "NEW_PROJECT">(
-    "NEW_COMPANY"
+    presetType ?? lead?.type ?? "NEW_COMPANY"
   );
-  const [companyId, setCompanyId] = useState<string>("");
-  const [estMrr, setEstMrr] = useState("");
-  const [estMonths, setEstMonths] = useState("");
-  const [estValue, setEstValue] = useState("");
-  // Once the user types a total we stop auto-filling it from MRR x months.
-  const [totalEdited, setTotalEdited] = useState(false);
+  const [companyId, setCompanyId] = useState<string>(
+    presetCompanyId ?? lead?.companyId ?? ""
+  );
+  const [contactId, setContactId] = useState<string>(lead?.contactId ?? "");
+  const [ownerId, setOwnerId] = useState<string>(lead?.ownerId ?? "");
+  const [estMrr, setEstMrr] = useState(
+    lead?.estMrr != null ? String(lead.estMrr) : ""
+  );
+  const [estMonths, setEstMonths] = useState(
+    lead?.estMonths != null ? String(lead.estMonths) : ""
+  );
+  const [estValue, setEstValue] = useState(
+    lead?.estValue != null ? String(lead.estValue) : ""
+  );
+  const [source, setSource] = useState(lead?.source ?? "");
+  const [expectedClose, setExpectedClose] = useState(
+    lead?.expectedClose
+      ? new Date(lead.expectedClose).toISOString().split("T")[0]
+      : ""
+  );
+  const [totalEdited, setTotalEdited] = useState(isEdit && lead?.estValue != null);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  useEffect(() => {
+    if (open) {
+      setTitle(lead?.title ?? "");
+      setType(presetType ?? lead?.type ?? "NEW_COMPANY");
+      setCompanyId(presetCompanyId ?? lead?.companyId ?? "");
+      setContactId(lead?.contactId ?? "");
+      setOwnerId(lead?.ownerId ?? "");
+      setEstMrr(lead?.estMrr != null ? String(lead.estMrr) : "");
+      setEstMonths(lead?.estMonths != null ? String(lead.estMonths) : "");
+      setEstValue(lead?.estValue != null ? String(lead.estValue) : "");
+      setSource(lead?.source ?? "");
+      setExpectedClose(
+        lead?.expectedClose
+          ? new Date(lead.expectedClose).toISOString().split("T")[0]
+          : ""
+      );
+      setTotalEdited(isEdit && lead?.estValue != null);
+    }
+  }, [open, lead]);
 
   const computedTotal =
     estMrr && estMonths
@@ -60,14 +125,28 @@ export function LeadFormDialog({
     [contacts, companyId]
   );
 
+  // Organization leads carry no economics; make sure stale state can't leak
+  // values into the submission after a track switch.
+  const showMoney = type === "NEW_PROJECT";
+
   function handleSubmit(formData: FormData) {
     formData.set("type", type);
+    if (ownerId) formData.set("ownerId", ownerId);
+    if (sourceLeadId) formData.set("sourceLeadId", sourceLeadId);
+    if (!showMoney) {
+      formData.delete("estMrr");
+      formData.delete("estMonths");
+      formData.delete("estValue");
+    }
     startTransition(async () => {
-      const result = await createLead(formData);
+      const result = isEdit
+        ? await updateLead(lead!.id, formData)
+        : await createLead(formData);
       if (result.ok) {
-        toast.success("Lead created");
+        toast.success(isEdit ? "Lead updated" : "Lead created");
         setOpen(false);
-        if (result.id) router.push(`/leads/${result.id}`);
+        if (!isEdit && result.id) router.push(`/leads/${result.id}`);
+        if (isEdit) router.refresh();
       } else {
         toast.error(result.error ?? "Something went wrong");
       }
@@ -77,27 +156,45 @@ export function LeadFormDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="gap-1">
-          <Plus className="h-4 w-4" /> New lead
-        </Button>
+        {isEdit ? (
+          <Button variant="outline" size="sm" className="gap-1">
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+        ) : presetType ? (
+          <Button variant="outline" size="sm" className="gap-1">
+            <Plus className="h-3.5 w-3.5" /> {triggerLabel ?? "New lead"}
+          </Button>
+        ) : (
+          <Button className="gap-1">
+            <Plus className="h-4 w-4" /> New lead
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New lead</DialogTitle>
+          <DialogTitle>
+            {isEdit
+              ? "Edit lead"
+              : presetType === "NEW_PROJECT"
+                ? "New project lead"
+                : "New lead"}
+          </DialogTitle>
         </DialogHeader>
 
-        <Tabs
-          value={type}
-          onValueChange={(v) => setType(v as typeof type)}
-          className="w-full"
-        >
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="NEW_COMPANY">New company</TabsTrigger>
-            <TabsTrigger value="NEW_PROJECT">
-              New project (existing customer)
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        {!isEdit && !presetType && (
+          <Tabs
+            value={type}
+            onValueChange={(v) => setType(v as typeof type)}
+            className="w-full"
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="NEW_COMPANY">New company</TabsTrigger>
+              <TabsTrigger value="NEW_PROJECT">
+                New project (existing customer)
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
 
         <form action={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -106,6 +203,8 @@ export function LeadFormDialog({
               id="title"
               name="title"
               required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
               placeholder={
                 type === "NEW_PROJECT"
                   ? "Downtown garage build — 2 trailers"
@@ -121,7 +220,10 @@ export function LeadFormDialog({
             <Select
               name="companyId"
               value={companyId}
-              onValueChange={setCompanyId}
+              onValueChange={(v) => {
+                setCompanyId(v);
+                setContactId("");
+              }}
               required={type === "NEW_PROJECT"}
             >
               <SelectTrigger>
@@ -135,7 +237,7 @@ export function LeadFormDialog({
                 ))}
               </SelectContent>
             </Select>
-            {type === "NEW_COMPANY" && (
+            {!isEdit && type === "NEW_COMPANY" && (
               <p className="text-xs text-muted-foreground">
                 Create the company first under Companies if it isn&apos;t
                 listed, or leave blank for now.
@@ -143,7 +245,7 @@ export function LeadFormDialog({
             )}
           </div>
 
-          {type === "NEW_PROJECT" && (
+          {!isEdit && type === "NEW_PROJECT" && (
             <div className="space-y-2">
               <Label htmlFor="newProjectName">Project name *</Label>
               <Input
@@ -161,7 +263,11 @@ export function LeadFormDialog({
           {companyContacts.length > 0 && (
             <div className="space-y-2">
               <Label>Contact</Label>
-              <Select name="contactId">
+              <Select
+                name="contactId"
+                value={contactId}
+                onValueChange={setContactId}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select contact" />
                 </SelectTrigger>
@@ -176,6 +282,27 @@ export function LeadFormDialog({
             </div>
           )}
 
+          {users && users.length > 0 && (
+            <div className="space-y-2">
+              <Label>Owner</Label>
+              <Select value={ownerId} onValueChange={setOwnerId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select owner" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Money is project-track only. An organization lead has no job
+              behind it yet, so any figure here would be fiction. */}
+          {showMoney ? (
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
               <Label htmlFor="estMrr">Est. MRR ($/mo)</Label>
@@ -224,14 +351,33 @@ export function LeadFormDialog({
               )}
             </div>
           </div>
+          ) : (
+            <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+              Organization leads track the relationship, not a job — so they
+              carry no revenue estimate. When a real project surfaces, spawn a
+              project lead from this one and forecast it there.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="source">Source</Label>
-              <Input id="source" name="source" placeholder="Referral" />
+              <Input
+                id="source"
+                name="source"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                placeholder="Referral"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="expectedClose">Expected close</Label>
-              <Input id="expectedClose" name="expectedClose" type="date" />
+              <Input
+                id="expectedClose"
+                name="expectedClose"
+                type="date"
+                value={expectedClose}
+                onChange={(e) => setExpectedClose(e.target.value)}
+              />
             </div>
           </div>
 
@@ -244,7 +390,13 @@ export function LeadFormDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isPending}>
-              {isPending ? "Creating..." : "Create lead"}
+              {isPending
+                ? isEdit
+                  ? "Saving..."
+                  : "Creating..."
+                : isEdit
+                  ? "Save changes"
+                  : "Create lead"}
             </Button>
           </div>
         </form>

@@ -341,36 +341,116 @@ async function main() {
   }
   await prisma.maintenanceLog.createMany({ data: maintData });
 
-  // ---- Open pipeline: 3-6 leads per seller ----
-  const leadData: Prisma.LeadCreateManyInput[] = [];
-  const STAGES = ["NEW", "CONTACTED", "QUALIFIED", "QUOTE_SENT"] as const;
+  /* ---- Open pipeline, two tracks ----
+     The tracks are shaped differently on purpose:
+       Organization leads are relationship work — no MRR, no quote, and their
+         win state means "approved vendor". Some go on to spawn project leads.
+       Project leads are specific jobs — they carry MRR and must have a Project,
+         because without one there's nothing for trailers to deploy onto. */
+  const ORG_STAGES = ["UNQUALIFIED", "CONTACTED", "QUALIFIED", "WON"] as const;
+  const PROJECT_STAGES = [
+    "UNQUALIFIED",
+    "CONTACTED",
+    "QUALIFIED",
+    "QUOTE_SENT",
+  ] as const;
+
+  function projectEconomics() {
+    // Deal size = units x per-unit rate over an expected rental length.
+    const estMrr = int(1, 4) * pick([1850, 1950, 1950, 2100]);
+    const estMonths = pick([3, 4, 6, 6, 7, 9, 12]);
+    return { estMrr, estMonths, estValue: estMrr * estMonths };
+  }
+
+  // Organization leads first, so the won ones can source project leads.
+  let orgCount = 0;
+  const wonOrgLeads: { id: string; companyId: string; ownerId: string }[] = [];
   for (const sellerId of sellerIds) {
-    const n = int(3, 6);
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < int(1, 3); i++) {
       const company = pick(companies);
-      const [city] = pick(CITIES);
-      // Deal size = units x per-unit rate over an expected rental length.
-      const units = int(1, 4);
-      const perUnit = pick([1850, 1950, 1950, 2100]);
-      const estMrr = units * perUnit;
-      const estMonths = pick([3, 4, 6, 6, 7, 9, 12]);
-      leadData.push({
-        title: `${company.name} — ${city} ${pick(PROJECT_KINDS)}`,
-        type: rand() < 0.6 ? "NEW_PROJECT" : "NEW_COMPANY",
-        stage: pick([...STAGES]),
-        estMrr,
-        estMonths,
-        estValue: estMrr * estMonths,
-        source: pick(SOURCES),
-        companyId: company.id,
-        ownerId: sellerId,
-        expectedClose: daysAhead(int(5, 60)),
-        createdAt: daysAgo(int(0, 150)),
+      const stage = pick([...ORG_STAGES]);
+      const closed = stage === "WON";
+      const lead = await prisma.lead.create({
+        data: {
+          title: `${company.name} — ${pick([
+            "get on bid list",
+            "vendor qualification",
+            "intro call",
+            "prequalification packet",
+            "new account outreach",
+          ])}`,
+          type: "NEW_COMPANY",
+          stage,
+          // No economics on this track — that's the whole point.
+          source: pick(SOURCES),
+          companyId: company.id,
+          ownerId: sellerId,
+          closedAt: closed ? daysAgo(int(1, 90)) : null,
+          createdAt: daysAgo(int(10, 240)),
+        },
+        select: { id: true },
       });
+      orgCount++;
+      if (closed) {
+        wonOrgLeads.push({
+          id: lead.id,
+          companyId: company.id,
+          ownerId: sellerId,
+        });
+      }
     }
   }
-  await prisma.lead.createMany({ data: leadData });
-  console.log(`Open leads: ${leadData.length}.`);
+
+  // Project leads. Each gets a real Project, and roughly a third of them are
+  // attributed back to the prospecting that opened the account.
+  let projectLeadCount = 0;
+  let sourcedCount = 0;
+  for (const sellerId of sellerIds) {
+    for (let i = 0; i < int(2, 4); i++) {
+      // Prefer sourcing from this rep's own won prospecting when available.
+      const source =
+        rand() < 0.35
+          ? wonOrgLeads.find((o) => o.ownerId === sellerId)
+          : undefined;
+      const company = source
+        ? companies.find((c) => c.id === source.companyId) ?? pick(companies)
+        : pick(companies);
+      const [city, state] = pick(CITIES);
+      const kind = pick(PROJECT_KINDS);
+      const econ = projectEconomics();
+      const project = await prisma.project.create({
+        data: {
+          name: `${city} ${kind} #${int(100, 999)}`,
+          companyId: company.id,
+          status: "UPCOMING",
+          siteCity: city,
+          siteState: state,
+          expectedStart: daysAhead(int(7, 90)),
+        },
+        select: { id: true },
+      });
+      await prisma.lead.create({
+        data: {
+          title: `${company.name} — ${city} ${kind}`,
+          type: "NEW_PROJECT",
+          stage: pick([...PROJECT_STAGES]),
+          ...econ,
+          source: pick(SOURCES),
+          companyId: company.id,
+          projectId: project.id,
+          ownerId: sellerId,
+          sourceLeadId: source?.id,
+          expectedClose: daysAhead(int(5, 60)),
+          createdAt: daysAgo(int(0, 150)),
+        },
+      });
+      projectLeadCount++;
+      if (source) sourcedCount++;
+    }
+  }
+  console.log(
+    `Open leads: ${projectLeadCount} project (${sourcedCount} sourced from prospecting), ${orgCount} organization.`
+  );
 
   // ---- Activities: open (some overdue) + completed this week ----
   const activityData: Prisma.ActivityCreateManyInput[] = [];

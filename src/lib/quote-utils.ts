@@ -27,7 +27,18 @@ export async function getQuoteBuilderOptions() {
       select: { id: true, name: true, companyId: true },
     }),
     prisma.lead.findMany({
-      where: { stage: { notIn: ["WON", "LOST"] } },
+      where: {
+        // Organizations aren't quotable — you quote a job, not a company.
+        type: "NEW_PROJECT",
+        OR: [
+          { stage: { notIn: ["WON", "LOST"] } },
+          /* A won lead stays quotable until it's actually converted. Leads go
+             WON at quote acceptance now, and change orders, added trailers, and
+             corrected quotes all land in exactly that window — without this the
+             lead would silently vanish from the picker. */
+          { stage: "WON", quotes: { none: { subscriptions: { some: {} } } } },
+        ],
+      },
       orderBy: { createdAt: "desc" },
       select: { id: true, title: true, companyId: true, projectId: true },
     }),

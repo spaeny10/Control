@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { logChanges } from "@/lib/audit";
 import type { ActionResult } from "./company-actions";
 
 const projectSchema = z.object({
@@ -57,10 +58,44 @@ export async function updateProject(
     return { ok: false, error: parsed.error.issues[0].message };
   }
 
+  const before = await prisma.project.findUnique({
+    where: { id },
+    include: { company: { select: { name: true } } },
+  });
+
   const project = await prisma.project.update({
     where: { id },
     data: toData(parsed.data),
+    include: { company: { select: { name: true } } },
   });
+
+  if (before) {
+    await logChanges({
+      parent: { projectId: id },
+      authorId: session.user.id,
+      before: { ...before, companyName: before.company?.name ?? null },
+      after: { ...project, companyName: project.company?.name ?? null },
+      fields: {
+        name: { label: "Name" },
+        status: { label: "Status" },
+        companyName: { label: "Company" },
+        siteStreet: { label: "Site street" },
+        siteCity: { label: "Site city" },
+        siteState: { label: "Site state" },
+        siteZip: { label: "Site ZIP" },
+        expectedStart: {
+          label: "Expected start",
+          format: (v) => (v instanceof Date ? v.toLocaleDateString("en-US") : "—"),
+        },
+        expectedEnd: {
+          label: "Expected end",
+          format: (v) => (v instanceof Date ? v.toLocaleDateString("en-US") : "—"),
+        },
+        notes: { label: "Notes" },
+      },
+    });
+  }
+
   revalidatePath("/projects");
   revalidatePath(`/projects/${id}`);
   revalidatePath(`/companies/${project.companyId}`);
@@ -74,7 +109,23 @@ export async function setProjectStatus(
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
 
+  const before = await prisma.project.findUnique({
+    where: { id },
+    select: { status: true },
+  });
+
   await prisma.project.update({ where: { id }, data: { status } });
+
+  if (before && before.status !== status) {
+    await logChanges({
+      parent: { projectId: id },
+      authorId: session.user.id,
+      before: { status: before.status },
+      after: { status },
+      fields: { status: { label: "Status" } },
+    });
+  }
+
   revalidatePath("/projects");
   revalidatePath(`/projects/${id}`);
   return { ok: true };

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { logChanges } from "@/lib/audit";
 import type { BillingCycle } from "@prisma/client";
 
 const companySchema = z.object({
@@ -83,10 +84,40 @@ export async function updateCompany(
   const parentError = await validateParent(parentCompanyId || undefined, id);
   if (parentError) return { ok: false, error: parentError };
 
+  const before = await prisma.company.findUnique({
+    where: { id },
+    include: { parentCompany: { select: { name: true } } },
+  });
+
   await prisma.company.update({
     where: { id },
     data: { ...rest, parentCompanyId: parentCompanyId || null },
   });
+
+  const after = await prisma.company.findUnique({
+    where: { id },
+    include: { parentCompany: { select: { name: true } } },
+  });
+
+  if (before && after) {
+    await logChanges({
+      parent: { companyId: id },
+      authorId: session.user.id,
+      before: { ...before, parentCompany: before.parentCompany?.name ?? null },
+      after: { ...after, parentCompany: after.parentCompany?.name ?? null },
+      fields: {
+        name: { label: "Name" },
+        billingStreet: { label: "Street" },
+        billingCity: { label: "City" },
+        billingState: { label: "State" },
+        billingZip: { label: "ZIP" },
+        website: { label: "Website" },
+        notes: { label: "Notes" },
+        parentCompany: { label: "Parent company" },
+      },
+    });
+  }
+
   revalidatePath("/companies");
   revalidatePath(`/companies/${id}`);
   return { ok: true, id };

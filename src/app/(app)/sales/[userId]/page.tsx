@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
+import { OPEN_PIPELINE_STAGES, stageLabel } from "@/lib/lead-tracks";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { getRepEmailStats } from "@/lib/email-oversight";
 import { UnansweredCard } from "@/components/dashboard/unanswered-card";
@@ -73,7 +74,14 @@ export default async function RepDetailPage({
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
 
-  const [openActivities, recentDone, leads, subscriptions, email] =
+  const [
+    openActivities,
+    recentDone,
+    leads,
+    subscriptions,
+    email,
+    sourcedProjectLeads,
+  ] =
     await Promise.all([
       prisma.activity.findMany({
         where: { assigneeId: userId, done: false },
@@ -91,7 +99,16 @@ export default async function RepDetailPage({
         include: activityInclude,
       }),
       prisma.lead.findMany({
-        where: { ownerId: userId, stage: { notIn: ["WON", "LOST"] } },
+        where: {
+          ownerId: userId,
+          OR: [
+            { type: "NEW_PROJECT", stage: { notIn: ["WON", "LOST"] } },
+            /* Organization leads at every stage. Vendor approval IS the win on
+               this track, so excluding closed ones would hide exactly the
+               relationship work the rep should get credit for. */
+            { type: "NEW_COMPANY" },
+          ],
+        },
         orderBy: { createdAt: "desc" },
         include: { company: { select: { name: true } } },
       }),
@@ -107,15 +124,31 @@ export default async function RepDetailPage({
         },
       }),
       getRepEmailStats(userId),
+      /* Prospecting credit: project leads that grew out of a relationship this
+         rep opened, even if someone else now runs the job. */
+      prisma.lead.count({
+        where: {
+          type: "NEW_PROJECT",
+          sourceLead: { ownerId: userId },
+        },
+      }),
     ]);
 
   const activeMrr = subscriptions.reduce((s, x) => s + Number(x.mrr), 0);
   const rate = Number(user.commissionRate);
-  const pipeline = leads.reduce(
+  // Split by track: only project leads at a qualified stage are a forecast.
+  const projectForecast = leads.filter(
+    (l) => l.type === "NEW_PROJECT" && OPEN_PIPELINE_STAGES.includes(l.stage)
+  );
+  const projectUnqualified = leads.filter(
+    (l) => l.type === "NEW_PROJECT" && l.stage === "UNQUALIFIED"
+  );
+  const orgLeads = leads.filter((l) => l.type === "NEW_COMPANY");
+  const pipeline = projectForecast.reduce(
     (s, l) => s + (l.estValue ? Number(l.estValue) : 0),
     0
   );
-  const pipelineMrr = leads.reduce(
+  const pipelineMrr = projectForecast.reduce(
     (s, l) => s + (l.estMrr ? Number(l.estMrr) : 0),
     0
   );
@@ -143,23 +176,25 @@ export default async function RepDetailPage({
       sub: `${formatCurrency((activeMrr * rate) / 100)} commission at ${rate}%`,
     },
     {
-      label: "Pipeline MRR",
+      label: "Project pipeline",
       value: `${formatCurrency(pipelineMrr)}/mo`,
-      sub: `${formatCurrency(pipeline)} total · ${leads.length} lead${leads.length === 1 ? "" : "s"}`,
+      sub: `${projectForecast.length} qualified · ${formatCurrency(pipeline)} total`,
     },
     {
-      label: "Open activities",
+      // Count only. Prospecting is visible here but never dollarized.
+      label: "Organizations",
+      value: String(orgLeads.length),
+      sub: (() => {
+        const n = orgLeads.filter((l) => l.stage === "WON").length;
+        return `${n} approved vendor${n === 1 ? "" : "s"}`;
+      })(),
+    },
+    {
+      // Merged so the fourth slot can carry prospecting without losing info.
+      label: "Activities",
       value: String(openActivities.length),
-      sub:
-        overdueCount > 0
-          ? `${overdueCount} overdue`
-          : "nothing overdue",
+      sub: `${overdueCount} overdue · ${recentDone.length} done in 7d`,
       alert: overdueCount > 0,
-    },
-    {
-      label: "Done (7 days)",
-      value: String(recentDone.length),
-      sub: "completed activities",
     },
   ];
 
@@ -321,8 +356,20 @@ export default async function RepDetailPage({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            Open pipeline ({leads.length})
+            Project pipeline ({projectForecast.length})
           </CardTitle>
+          {projectUnqualified.length > 0 && (
+            <CardDescription>
+              <Link
+                href={`/leads?track=NEW_PROJECT&view=list&stage=UNQUALIFIED&owner=${userId}`}
+                className="hover:underline"
+              >
+                {projectUnqualified.length} unqualified project lead
+                {projectUnqualified.length === 1 ? "" : "s"} aren&apos;t
+                forecast →
+              </Link>
+            </CardDescription>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -337,17 +384,17 @@ export default async function RepDetailPage({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {leads.length === 0 && (
+              {projectForecast.length === 0 && (
                 <TableRow>
                   <TableCell
                     colSpan={6}
                     className="py-6 text-center text-muted-foreground"
                   >
-                    No open leads owned by {user.name}.
+                    No qualified project leads owned by {user.name}.
                   </TableCell>
                 </TableRow>
               )}
-              {leads.map((l) => (
+              {projectForecast.map((l) => (
                 <TableRow key={l.id}>
                   <TableCell>
                     <Link
@@ -362,7 +409,7 @@ export default async function RepDetailPage({
                   </TableCell>
                   <TableCell>
                     <Badge variant={statusBadgeVariant(l.stage)}>
-                      {l.stage.replace("_", " ")}
+                      {stageLabel(l.type, l.stage)}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right font-medium">
@@ -380,6 +427,64 @@ export default async function RepDetailPage({
           </Table>
         </CardContent>
       </Card>
+
+      {(orgLeads.length > 0 || sourcedProjectLeads > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Organizations ({orgLeads.length})
+            </CardTitle>
+            <CardDescription>
+              Relationship work — no revenue columns, because these carry no
+              forecast. {sourcedProjectLeads} project lead
+              {sourcedProjectLeads === 1 ? "" : "s"} came from relationships
+              {" "}
+              {user.name.split(" ")[0]} opened.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Lead</TableHead>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Stage</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Created</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {orgLeads.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell>
+                      <Link
+                        href={`/leads/${l.id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {l.title}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {l.company?.name ?? "—"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusBadgeVariant(l.stage)}>
+                        {stageLabel(l.type, l.stage)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {l.source ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDate(l.createdAt)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

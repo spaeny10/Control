@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import type { ActionResult } from "./company-actions";
 import { isGmailConfigured, sendEmailAs } from "@/lib/google/gmail";
+import { formatCurrency } from "@/lib/format";
 
 const lineItemSchema = z.object({
   cycle: z.enum(["ONE_TIME", "DAILY", "WEEKLY", "EVERY_28_DAYS", "MONTHLY"]),
@@ -93,7 +94,14 @@ export async function updateQuote(
   const session = await auth();
   if (!session?.user) return { ok: false, error: "Not authenticated" };
 
-  const existing = await prisma.quote.findUnique({ where: { id } });
+  const existing = await prisma.quote.findUnique({
+    where: { id },
+    include: {
+      company: { select: { name: true } },
+      contact: { select: { firstName: true, lastName: true } },
+      lineItems: { orderBy: { sortOrder: "asc" } },
+    },
+  });
   if (!existing) return { ok: false, error: "Quote not found" };
   if (existing.status !== "DRAFT" && existing.status !== "SENT") {
     return { ok: false, error: `Cannot edit a ${existing.status} quote` };
@@ -129,6 +137,56 @@ export async function updateQuote(
       },
     }),
   ]);
+
+  const after = await prisma.quote.findUnique({
+    where: { id },
+    include: {
+      company: { select: { name: true } },
+      contact: { select: { firstName: true, lastName: true } },
+      lineItems: { orderBy: { sortOrder: "asc" } },
+    },
+  });
+
+  if (after) {
+    const changes: string[] = [];
+    if (existing.company?.name !== after.company?.name)
+      changes.push(`Company: ${existing.company?.name ?? "—"} → ${after.company?.name ?? "—"}`);
+    const oldContact = existing.contact
+      ? `${existing.contact.firstName} ${existing.contact.lastName}`
+      : "—";
+    const newContact = after.contact
+      ? `${after.contact.firstName} ${after.contact.lastName}`
+      : "—";
+    if (oldContact !== newContact)
+      changes.push(`Contact: ${oldContact} → ${newContact}`);
+    if (existing.terms !== after.terms) changes.push("Terms updated");
+
+    const oldTotal = existing.lineItems.reduce(
+      (s, i) => s + i.quantity * Number(i.unitPrice),
+      0
+    );
+    const newTotal = after.lineItems.reduce(
+      (s, i) => s + i.quantity * Number(i.unitPrice),
+      0
+    );
+    const oldCount = existing.lineItems.length;
+    const newCount = after.lineItems.length;
+    if (oldCount !== newCount)
+      changes.push(`Line items: ${oldCount} → ${newCount}`);
+    if (Math.abs(oldTotal - newTotal) > 0.001)
+      changes.push(`Total: ${formatCurrency(oldTotal)} → ${formatCurrency(newTotal)}`);
+
+    if (changes.length > 0) {
+      await prisma.message.create({
+        data: {
+          channel: "SYSTEM",
+          body: changes.join("\n"),
+          authorId: session.user.id,
+          quoteId: id,
+        },
+      });
+    }
+  }
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${id}`);
@@ -231,7 +289,7 @@ export async function sendQuote(id: string): Promise<ActionResult> {
   // Advance the linked lead to QUOTE_SENT if it's still earlier in the pipeline.
   if (quote.leadId) {
     const lead = await prisma.lead.findUnique({ where: { id: quote.leadId } });
-    if (lead && ["NEW", "CONTACTED", "QUALIFIED"].includes(lead.stage)) {
+    if (lead && ["UNQUALIFIED", "CONTACTED", "QUALIFIED"].includes(lead.stage)) {
       await prisma.lead.update({
         where: { id: quote.leadId },
         data: { stage: "QUOTE_SENT" },
@@ -315,12 +373,24 @@ export async function acceptQuote(
               leadId: quote.leadId,
             },
           }),
+          // The customer's signature is the win. Waiting for ops to convert
+          // the quote made win rate a measure of fulfillment latency, and
+          // double-counted the revenue as both pipeline and pending
+          // subscription in the meantime.
+          prisma.lead.update({
+            where: { id: quote.leadId },
+            data: { stage: "WON", closedAt: new Date(), lostReason: null },
+          }),
         ]
       : []),
   ]);
 
   revalidatePath(`/quotes/${quote.id}`);
   revalidatePath("/quotes");
+  if (quote.leadId) {
+    revalidatePath("/leads");
+    revalidatePath(`/leads/${quote.leadId}`);
+  }
   return { ok: true };
 }
 
@@ -350,9 +420,30 @@ export async function declineQuote(
         quoteId: quote.id,
       },
     }),
+    /* Mirror it onto the lead. The lead deliberately stays at QUOTE_SENT — in
+       this business a decline often means "not at that price", so the rep
+       decides whether to re-quote. It surfaces on the stalled-quotes card, and
+       that review is impossible if the decline isn't visible on the record. */
+    ...(quote.leadId
+      ? [
+          prisma.message.create({
+            data: {
+              channel: "SYSTEM",
+              body: `Quote ${quote.number} declined by the customer${
+                reason ? ` — "${reason}"` : ""
+              }`,
+              leadId: quote.leadId,
+            },
+          }),
+        ]
+      : []),
   ]);
 
   revalidatePath(`/quotes/${quote.id}`);
   revalidatePath("/quotes");
+  if (quote.leadId) {
+    revalidatePath("/leads");
+    revalidatePath(`/leads/${quote.leadId}`);
+  }
   return { ok: true };
 }

@@ -19,26 +19,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import type { LeadStage } from "@prisma/client";
-
-const STAGES: { key: LeadStage; label: string }[] = [
-  { key: "NEW", label: "New" },
-  { key: "CONTACTED", label: "Contacted" },
-  { key: "QUALIFIED", label: "Qualified" },
-  { key: "QUOTE_SENT", label: "Quote Sent" },
-  { key: "WON", label: "Won" },
-  { key: "LOST", label: "Lost" },
-];
+import { stagesForTrack, stageLabel } from "@/lib/lead-tracks";
+import type { LeadStage, LeadType } from "@prisma/client";
 
 export function LeadStageSelect({
   leadId,
   stage,
+  type,
 }: {
   leadId: string;
   stage: LeadStage;
+  type: LeadType;
 }) {
   const [lostOpen, setLostOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  // Organization leads have no QUOTE_SENT stage, and read Won/Lost as
+  // "Vendor approved" / "Not a fit".
+  const stages = stagesForTrack(type);
+  const lostLabel = stageLabel(type, "LOST");
 
   function change(next: LeadStage, lostReason?: string) {
     startTransition(async () => {
@@ -61,9 +59,9 @@ export function LeadStageSelect({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {STAGES.map((s) => (
-            <SelectItem key={s.key} value={s.key}>
-              {s.label}
+          {stages.map((s) => (
+            <SelectItem key={s} value={s}>
+              {stageLabel(type, s)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -72,7 +70,7 @@ export function LeadStageSelect({
       <Dialog open={lostOpen} onOpenChange={setLostOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Mark lead as lost</DialogTitle>
+            <DialogTitle>Mark lead as {lostLabel.toLowerCase()}</DialogTitle>
           </DialogHeader>
           <form
             action={(formData) => {
@@ -94,7 +92,7 @@ export function LeadStageSelect({
                 Cancel
               </Button>
               <Button type="submit" variant="destructive">
-                Mark lost
+                Mark {lostLabel.toLowerCase()}
               </Button>
             </div>
           </form>

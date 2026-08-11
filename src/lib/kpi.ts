@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { OPEN_PIPELINE_STAGES } from "@/lib/lead-tracks";
 import {
   startOfMonth,
   endOfMonth,
@@ -16,6 +17,25 @@ export type MovementPoint = {
 };
 export type LeadsPoint = { month: string; newCompany: number; newProject: number };
 
+/** Organization prospecting, reported by count and stage only. There is no
+    dollar figure here on purpose — a relationship has no job behind it yet, so
+    any forecast would be fiction. Credit shows up as sourcedProjectLeads. */
+export type ProspectingFunnel = {
+  unqualified: number;
+  contacted: number;
+  qualified: number;
+  approvedVendors: number;
+  lost: number;
+  /** Live relationship work: contacted + qualified. */
+  active: number;
+  /** Project leads these relationships produced inside the window. */
+  sourcedProjectLeads: number;
+  /** Raw counts so a thin denominator can suppress the rate. */
+  wonInWindow: number;
+  lostInWindow: number;
+  winRate: number | null;
+};
+
 // Pass a repId to scope every figure to one salesperson: subscriptions by
 // attribution, leads by owner, invoices/projects through their subscriptions.
 export async function getDashboardData(
@@ -24,6 +44,7 @@ export async function getDashboardData(
 ) {
   const now = new Date();
   const window = Math.min(36, Math.max(2, months));
+  const windowStart = startOfMonth(subMonths(now, window - 1));
   const subScope = repId ? { salespersonId: repId } : {};
   const leadScope = repId ? { ownerId: repId } : {};
 
@@ -32,12 +53,14 @@ export async function getDashboardData(
     endedSubs,
     trailers,
     repDeployedUnits,
-    openLeads,
-    wonCount,
-    lostCount,
+    projectPipeline,
+    projectUnqualifiedCount,
+    prospectingByStage,
+    closedByTrack,
     overdueInvoices,
     upcomingCompletions,
     leadsInWindow,
+    sourcedProjectLeads,
   ] = await Promise.all([
     prisma.subscription.findMany({
       where: { ...subScope, status: { in: ["ACTIVE", "PAST_DUE", "PAUSED"] } },
@@ -58,12 +81,37 @@ export async function getDashboardData(
           },
         })
       : Promise.resolve(0),
+    // The forecast: project track, qualified stages only. UNQUALIFIED is a
+    // holding pen of unvetted leads and would inflate this with work nobody
+    // has looked at yet.
     prisma.lead.findMany({
-      where: { ...leadScope, stage: { notIn: ["WON", "LOST"] } },
-      select: { estValue: true, estMrr: true },
+      where: {
+        ...leadScope,
+        type: "NEW_PROJECT",
+        stage: { in: [...OPEN_PIPELINE_STAGES] },
+      },
+      select: { estValue: true, estMrr: true, stage: true },
     }),
-    prisma.lead.count({ where: { ...leadScope, stage: "WON" } }),
-    prisma.lead.count({ where: { ...leadScope, stage: "LOST" } }),
+    // Reported alongside, so the excluded backlog isn't invisible.
+    prisma.lead.count({
+      where: { ...leadScope, type: "NEW_PROJECT", stage: "UNQUALIFIED" },
+    }),
+    prisma.lead.groupBy({
+      by: ["stage"],
+      where: { ...leadScope, type: "NEW_COMPANY" },
+      _count: true,
+    }),
+    // Win rate per track, windowed on closedAt. Pooling the two tracks would
+    // average a quote-acceptance rate with a vendor-approval rate.
+    prisma.lead.groupBy({
+      by: ["type", "stage"],
+      where: {
+        ...leadScope,
+        stage: { in: ["WON", "LOST"] },
+        closedAt: { gte: windowStart },
+      },
+      _count: true,
+    }),
     prisma.invoice.aggregate({
       where: {
         status: "OPEN",
@@ -85,11 +133,19 @@ export async function getDashboardData(
       orderBy: { expectedEnd: "asc" },
     }),
     prisma.lead.findMany({
-      where: {
-        ...leadScope,
-        createdAt: { gte: startOfMonth(subMonths(now, window - 1)) },
-      },
+      where: { ...leadScope, createdAt: { gte: windowStart } },
       select: { createdAt: true, type: true },
+    }),
+    /* Prospecting credit. Note the deliberate exception to leadScope: this
+       filters on the SOURCE lead's owner, not the new lead's — the rep who
+       opened the door keeps credit even when someone else runs the job. */
+    prisma.lead.count({
+      where: {
+        type: "NEW_PROJECT",
+        createdAt: { gte: windowStart },
+        sourceLeadId: { not: null },
+        ...(repId ? { sourceLead: { ownerId: repId } } : {}),
+      },
     }),
   ]);
 
@@ -191,6 +247,38 @@ export async function getDashboardData(
       ? durations.reduce((a, b) => a + b, 0) / durations.length
       : null;
 
+  // Closed-lead counts, split by track.
+  function closedCount(type: "NEW_PROJECT" | "NEW_COMPANY", stage: string) {
+    return (
+      closedByTrack.find((r) => r.type === type && r.stage === stage)?._count ??
+      0
+    );
+  }
+  const projectWon = closedCount("NEW_PROJECT", "WON");
+  const projectLost = closedCount("NEW_PROJECT", "LOST");
+  const orgWonInWindow = closedCount("NEW_COMPANY", "WON");
+  const orgLostInWindow = closedCount("NEW_COMPANY", "LOST");
+
+  const stageCount = (stage: string) =>
+    prospectingByStage.find((r) => r.stage === stage)?._count ?? 0;
+  const prospecting: ProspectingFunnel = {
+    unqualified: stageCount("UNQUALIFIED"),
+    contacted: stageCount("CONTACTED"),
+    qualified: stageCount("QUALIFIED"),
+    approvedVendors: stageCount("WON"),
+    lost: stageCount("LOST"),
+    active: stageCount("CONTACTED") + stageCount("QUALIFIED"),
+    sourcedProjectLeads,
+    wonInWindow: orgWonInWindow,
+    lostInWindow: orgLostInWindow,
+    winRate:
+      orgWonInWindow + orgLostInWindow > 0
+        ? Math.round(
+            (orgWonInWindow / (orgWonInWindow + orgLostInWindow)) * 100
+          )
+        : null,
+  };
+
   return {
     stats: {
       mrr,
@@ -200,19 +288,26 @@ export async function getDashboardData(
       // Only meaningful when scoped to a rep.
       repDeployedUnits,
       scopedToRep: !!repId,
-      pipelineValue: openLeads.reduce(
-        (sum, l) => sum + (l.estValue ? Number(l.estValue) : 0),
-        0
-      ),
-      pipelineMrr: openLeads.reduce(
+      // Project track only — the one number that represents deployable
+      // revenue. Renamed rather than reused so every consumer of the old
+      // blended figure becomes a compile error instead of silently wrong.
+      projectPipelineMrr: projectPipeline.reduce(
         (sum, l) => sum + (l.estMrr ? Number(l.estMrr) : 0),
         0
       ),
-      openLeadCount: openLeads.length,
-      winRate:
-        wonCount + lostCount > 0
-          ? Math.round((wonCount / (wonCount + lostCount)) * 100)
+      projectPipelineValue: projectPipeline.reduce(
+        (sum, l) => sum + (l.estValue ? Number(l.estValue) : 0),
+        0
+      ),
+      projectPipelineCount: projectPipeline.length,
+      projectUnqualifiedCount,
+      projectWinRate:
+        projectWon + projectLost > 0
+          ? Math.round((projectWon / (projectWon + projectLost)) * 100)
           : null,
+      projectWonCount: projectWon,
+      projectLostCount: projectLost,
+      winRateWindowMonths: window,
       overdueAmount:
         Number(overdueInvoices._sum.amountDue ?? 0) -
         Number(overdueInvoices._sum.amountPaid ?? 0),
@@ -223,6 +318,7 @@ export async function getDashboardData(
           : null,
       avgDurationMonths,
     },
+    prospecting,
     mrrTrend,
     movement,
     leadsByMonth,

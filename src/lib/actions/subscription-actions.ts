@@ -59,7 +59,7 @@ export async function convertQuoteToSubscription(input: {
       contact: true,
       lineItems: true,
       subscriptions: true,
-      lead: { select: { ownerId: true } },
+      lead: { select: { ownerId: true, stage: true } },
     },
   });
   if (!quote) return { ok: false, error: "Quote not found" };
@@ -207,11 +207,13 @@ export async function convertQuoteToSubscription(input: {
       })
     );
   }
-  if (quote.leadId) {
+  // The lead already went WON when the customer accepted; converting is a
+  // fulfillment step. This only backfills leads accepted before that changed.
+  if (quote.leadId && quote.lead?.stage !== "WON") {
     ops.push(
       prisma.lead.update({
         where: { id: quote.leadId },
-        data: { stage: "WON" },
+        data: { stage: "WON", closedAt: new Date() },
       })
     );
   }
