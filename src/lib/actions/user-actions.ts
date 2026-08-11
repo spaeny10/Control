@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
+import { armMailboxWatch, disarmMailboxWatch } from "@/lib/google/mailbox";
 
 const passwordSchema = z
   .string()
@@ -92,6 +93,12 @@ export async function createUser(formData: FormData): Promise<ActionResult> {
       passwordHash: await bcrypt.hash(d.password, 10),
     },
   });
+
+  // Arm their mailbox watch so inbound customer replies work from day one.
+  // Deliberately ignores the result: onboarding must not fail because Gmail
+  // is unconfigured or unavailable, and Settings surfaces watch health.
+  await armMailboxWatch(email);
+
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -119,11 +126,12 @@ export async function updateUser(
       return { ok: false, error: "Cannot demote the last admin" };
   }
 
+  const nextEmail = d.email.toLowerCase().trim();
   await prisma.user.update({
     where: { id },
     data: {
       name: d.name,
-      email: d.email.toLowerCase().trim(),
+      email: nextEmail,
       role: d.role,
       areas: parseAreas(formData),
       ...(d.password && d.password.length >= 10
@@ -131,6 +139,14 @@ export async function updateUser(
         : {}),
     },
   });
+
+  // If their address changed, move the watch with them — otherwise it would
+  // keep pointing at a mailbox that's no longer theirs.
+  if (nextEmail !== target.email) {
+    await disarmMailboxWatch(target.email);
+    if (target.isActive) await armMailboxWatch(nextEmail);
+  }
+
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -156,6 +172,15 @@ export async function setUserActive(
   }
 
   await prisma.user.update({ where: { id }, data: { isActive } });
+
+  // Watch lifecycle follows user lifecycle: a departing rep's mailbox stops
+  // being read, and a returning one starts again. Their existing customer
+  // threads stay on the records either way, and any awaiting a reply surface
+  // on the dashboard as unanswered.
+  if (isActive) await armMailboxWatch(target.email);
+  else await disarmMailboxWatch(target.email);
+
   revalidatePath("/settings");
+  revalidatePath("/");
   return { ok: true };
 }

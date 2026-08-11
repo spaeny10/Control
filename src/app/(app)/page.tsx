@@ -19,6 +19,8 @@ import {
   type ActivityView,
 } from "@/components/activities/activity-row";
 import { FilterPills } from "@/components/layout/filter-pills";
+import { getUnansweredThreads } from "@/lib/email-oversight";
+import { UnansweredCard } from "@/components/dashboard/unanswered-card";
 import {
   CircleDollarSign,
   Repeat,
@@ -55,9 +57,12 @@ export default async function DashboardPage({
   const repId = reps.some((r) => r.id === rep) ? rep : undefined;
   const repName = reps.find((r) => r.id === repId)?.name;
 
+  const isAdmin = session?.user?.role === "ADMIN";
+
   const [
     { stats, mrrTrend, movement, leadsByMonth, upcomingCompletions },
     myActivities,
+    unanswered,
   ] = await Promise.all([
     getDashboardData(months, repId),
     prisma.activity.findMany({
@@ -74,6 +79,9 @@ export default async function DashboardPage({
         },
       },
     }),
+    // Admins see the whole team's waiting customers; members see their own.
+    // A rep filter narrows it to that rep either way.
+    getUnansweredThreads(repId ?? (isAdmin ? undefined : session?.user?.id)),
   ]);
 
   const now = new Date();
@@ -247,6 +255,8 @@ export default async function DashboardPage({
           </Card>
         ))}
       </div>
+
+      <UnansweredCard threads={unanswered} showRep={isAdmin && !repId} />
 
       {activityViews.length > 0 && (
         <Card>

@@ -3,13 +3,23 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
-import { watchMailbox } from "@/lib/google/gmail";
-import { isWorkspaceEmail } from "@/lib/google/identity";
+import { armMailboxWatch, disarmMailboxWatch } from "@/lib/google/mailbox";
 import type { ActionResult } from "./company-actions";
 
 /* Admin controls for which mailboxes the app watches for inbound email.
-   The GmailSyncState rows double as the impersonation allowlist, so adding a
-   mailbox here is the deliberate act that grants the app access to it. */
+   The lifecycle logic lives in @/lib/google/mailbox so user-management flows
+   can reuse it. */
+
+function reasonMessage(reason: string) {
+  switch (reason) {
+    case "not-configured":
+      return "Google Workspace and the Pub/Sub topic must be configured first.";
+    case "not-workspace":
+      return "Must be a company Workspace address.";
+    default:
+      return "Google refused the watch. Check the service account, Pub/Sub topic, and domain-wide delegation scopes.";
+  }
+}
 
 export async function startWatchingMailbox(
   formData: FormData
@@ -18,40 +28,13 @@ export async function startWatchingMailbox(
   if (session?.user?.role !== "ADMIN")
     return { ok: false, error: "Admin only" };
 
-  const emailAddress = String(formData.get("emailAddress") ?? "")
-    .trim()
-    .toLowerCase();
+  const emailAddress = String(formData.get("emailAddress") ?? "").trim();
   if (!emailAddress) return { ok: false, error: "Mailbox address required" };
-  if (!isWorkspaceEmail(emailAddress)) {
-    return { ok: false, error: "Must be a company Workspace address" };
-  }
 
-  // Arm the Gmail watch first — if Google refuses, don't create a row that
-  // claims we're watching a mailbox we aren't.
-  const watch = await watchMailbox(emailAddress);
-  if (!watch) {
-    return {
-      ok: false,
-      error:
-        "Google refused the watch. Check the service account, Pub/Sub topic, and domain-wide delegation scopes.",
-    };
+  const result = await armMailboxWatch(emailAddress);
+  if (!result.armed) {
+    return { ok: false, error: reasonMessage(result.reason) };
   }
-
-  await prisma.gmailSyncState.upsert({
-    where: { emailAddress },
-    create: {
-      emailAddress,
-      isActive: true,
-      // Start from now so we don't import the mailbox's whole history.
-      lastHistoryId: watch.historyId,
-      watchExpiration: watch.expiration,
-    },
-    update: {
-      isActive: true,
-      watchExpiration: watch.expiration,
-      lastError: null,
-    },
-  });
 
   revalidatePath("/settings");
   return { ok: true };
@@ -62,12 +45,52 @@ export async function stopWatchingMailbox(id: string): Promise<ActionResult> {
   if (session?.user?.role !== "ADMIN")
     return { ok: false, error: "Admin only" };
 
-  // Deactivate rather than delete so the historyId survives if it's re-enabled,
-  // and so the allowlist check has an explicit "off" state.
-  await prisma.gmailSyncState.update({
-    where: { id },
-    data: { isActive: false },
-  });
+  const mailbox = await prisma.gmailSyncState.findUnique({ where: { id } });
+  if (!mailbox) return { ok: false, error: "Mailbox not found" };
+
+  await disarmMailboxWatch(mailbox.emailAddress);
   revalidatePath("/settings");
   return { ok: true };
+}
+
+/**
+ * Arm watches for every active user with Sales access in one go, so onboarding
+ * nine existing reps isn't nine manual steps.
+ */
+export async function armWatchesForActiveReps(): Promise<ActionResult> {
+  const session = await auth();
+  if (session?.user?.role !== "ADMIN")
+    return { ok: false, error: "Admin only" };
+
+  const users = await prisma.user.findMany({
+    where: { isActive: true, OR: [{ role: "ADMIN" }, { areas: { has: "SALES" } }] },
+    select: { email: true },
+  });
+
+  let armed = 0;
+  const failures: string[] = [];
+  for (const user of users) {
+    const result = await armMailboxWatch(user.email);
+    if (result.armed) armed++;
+    else failures.push(user.email);
+  }
+
+  revalidatePath("/settings");
+  if (armed === 0) {
+    return {
+      ok: false,
+      error:
+        users.length === 0
+          ? "No active sales users to arm."
+          : "Could not arm any mailboxes — check the Google configuration.",
+    };
+  }
+  return {
+    ok: true,
+    // Report partial success honestly rather than implying all succeeded.
+    error:
+      failures.length > 0
+        ? `Armed ${armed}; failed for ${failures.join(", ")}.`
+        : undefined,
+  };
 }

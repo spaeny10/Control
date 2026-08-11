@@ -24,6 +24,9 @@ import {
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
+import { getRepEmailStats } from "@/lib/email-oversight";
+import { UnansweredCard } from "@/components/dashboard/unanswered-card";
+import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 
 export const metadata = { title: "Rep detail" };
 
@@ -70,7 +73,7 @@ export default async function RepDetailPage({
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
 
-  const [openActivities, recentDone, leads, subscriptions] =
+  const [openActivities, recentDone, leads, subscriptions, email] =
     await Promise.all([
       prisma.activity.findMany({
         where: { assigneeId: userId, done: false },
@@ -103,6 +106,7 @@ export default async function RepDetailPage({
           project: { select: { name: true } },
         },
       }),
+      getRepEmailStats(userId),
     ]);
 
   const activeMrr = subscriptions.reduce((s, x) => s + Number(x.mrr), 0);
@@ -262,6 +266,57 @@ export default async function RepDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      <UnansweredCard threads={email.unanswered} showRep={false} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Customer email</CardTitle>
+          <CardDescription>
+            {email.sent.toLocaleString()} sent all-time ·{" "}
+            {email.sentThisWeek.toLocaleString()} this week ·{" "}
+            {email.received.toLocaleString()} replies received ·{" "}
+            {email.unanswered.length} awaiting a reply
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {email.recent.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No customer email yet for {user.name}.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {email.recent.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-start gap-3 py-2 text-sm"
+                >
+                  {m.direction === "IN" ? (
+                    <ArrowDownLeft className="mt-0.5 h-4 w-4 shrink-0 text-[#2a78d6]" />
+                  ) : (
+                    <ArrowUpRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">
+                      {m.subject ?? "(no subject)"}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {m.href ? (
+                        <Link href={m.href} className="hover:underline">
+                          {m.customer ?? m.address ?? "—"}
+                        </Link>
+                      ) : (
+                        (m.customer ?? m.address ?? "—")
+                      )}{" "}
+                      · {formatDateTime(m.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

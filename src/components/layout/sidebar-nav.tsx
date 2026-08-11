@@ -16,6 +16,7 @@ import {
   CalendarDays,
   Settings,
   UserCircle,
+  Mail,
 } from "lucide-react";
 import type { AppArea } from "@prisma/client";
 
@@ -23,6 +24,8 @@ type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  // Team-wide customer correspondence is a manager view, not a rep one.
+  adminOnly?: boolean;
 };
 
 const SECTIONS: { area: AppArea; label: string; items: NavItem[] }[] = [
@@ -35,6 +38,7 @@ const SECTIONS: { area: AppArea; label: string; items: NavItem[] }[] = [
       { href: "/contacts", label: "Contacts", icon: Contact },
       { href: "/projects", label: "Projects", icon: HardHat },
       { href: "/sales", label: "Commissions", icon: BadgeDollarSign },
+      { href: "/inbox", label: "Team inbox", icon: Mail, adminOnly: true },
     ],
   },
   {
@@ -77,7 +81,13 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   );
 }
 
-export function SidebarNav({ areas }: { areas: AppArea[] }) {
+export function SidebarNav({
+  areas,
+  isAdmin = false,
+}: {
+  areas: AppArea[];
+  isAdmin?: boolean;
+}) {
   const pathname = usePathname();
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
@@ -103,13 +113,15 @@ export function SidebarNav({ areas }: { areas: AppArea[] }) {
             {section.label}
           </p>
           <div className="flex flex-col gap-1">
-            {section.items.map((item) => (
-              <NavLink
-                key={item.href}
-                item={item}
-                active={isActive(item.href)}
-              />
-            ))}
+            {section.items
+              .filter((item) => !item.adminOnly || isAdmin)
+              .map((item) => (
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  active={isActive(item.href)}
+                />
+              ))}
           </div>
         </div>
       ))}

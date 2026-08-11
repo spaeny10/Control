@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { isGoogleConfigured } from "@/lib/google/client";
+import { getWatchHealthByEmail } from "@/lib/google/mailbox";
 import { GmailMailboxesCard } from "@/components/settings/gmail-mailboxes-card";
 
 export const metadata = { title: "Settings" };
@@ -33,7 +34,7 @@ export default async function SettingsPage({
 
   const googleConfigured = isGoogleConfigured();
 
-  const [users, products, teams, mailboxes] = await Promise.all([
+  const [users, products, teams, mailboxes, watchHealth] = await Promise.all([
     isAdmin
       ? prisma.user.findMany({ orderBy: { name: "asc" } })
       : Promise.resolve([]),
@@ -50,6 +51,7 @@ export default async function SettingsPage({
     isAdmin
       ? prisma.gmailSyncState.findMany({ orderBy: { emailAddress: "asc" } })
       : Promise.resolve([]),
+    isAdmin ? getWatchHealthByEmail() : Promise.resolve(new Map()),
   ]);
 
   return (
@@ -117,6 +119,16 @@ export default async function SettingsPage({
                         {!u.isActive && (
                           <Badge variant="outline">Deactivated</Badge>
                         )}
+                        {/* Inbound-email health. "Expired" is the important
+                            one: Gmail stops publishing silently. */}
+                        {u.isActive &&
+                          (watchHealth.get(u.email) === "expired" ? (
+                            <Badge variant="destructive">Mail watch expired</Badge>
+                          ) : watchHealth.get(u.email) === "active" ? (
+                            <Badge variant="secondary">Mail watched</Badge>
+                          ) : (
+                            <Badge variant="outline">No mail watch</Badge>
+                          ))}
                         <Badge
                           variant={u.role === "ADMIN" ? "default" : "secondary"}
                         >

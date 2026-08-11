@@ -4,6 +4,7 @@ import { useRef, useTransition } from "react";
 import {
   startWatchingMailbox,
   stopWatchingMailbox,
+  armWatchesForActiveReps,
 } from "@/lib/actions/gmail-admin-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,6 +88,26 @@ export function GmailMailboxesCard({
             disabled={isPending || !configured}
           >
             <Plus className="h-3.5 w-3.5" /> Watch mailbox
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={isPending || !configured}
+            onClick={() =>
+              startTransition(async () => {
+                const result = await armWatchesForActiveReps();
+                if (result.ok) {
+                  // A partial success returns ok with a message.
+                  if (result.error) toast.warning(result.error);
+                  else toast.success("Watching all active sales mailboxes");
+                } else {
+                  toast.error(result.error ?? "Failed");
+                }
+              })
+            }
+          >
+            Arm all sales reps
           </Button>
         </form>
 

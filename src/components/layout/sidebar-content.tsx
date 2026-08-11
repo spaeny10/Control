@@ -46,7 +46,7 @@ export function SidebarContent({
       </div>
 
       <div className="flex-1 overflow-y-auto py-4">
-        <SidebarNav areas={areas} />
+        <SidebarNav areas={areas} isAdmin={role === "ADMIN"} />
       </div>
 
       <div className="shrink-0 border-t border-sidebar-border p-3">
