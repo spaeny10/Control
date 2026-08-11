@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getDeliveryQueue, getPickupQueue } from "@/lib/dispatch-queues";
 import { JobFormDialog } from "@/components/dispatch/job-form-dialog";
 import { JobCard, type DispatchJobView } from "@/components/dispatch/job-card";
 import { Button } from "@/components/ui/button";
@@ -61,61 +62,11 @@ export default async function DispatchPage({
         },
         orderBy: { createdAt: "desc" },
       }),
-      // Jobs winding down in the next 30 days with no pickup booked yet. The end
-      // date is an estimate, not the customer's word — see the card copy.
-      prisma.project.findMany({
-        where: {
-          status: "ACTIVE",
-          expectedEnd: { gte: now, lte: addDays(now, 30) },
-          subscriptions: {
-            some: {
-              status: { not: "ENDED" },
-              dispatchJobs: {
-                none: {
-                  type: "PICKUP",
-                  status: { in: ["SCHEDULED", "IN_PROGRESS"] },
-                },
-              },
-            },
-          },
-        },
-        include: {
-          company: { select: { name: true } },
-          subscriptions: {
-            where: { status: { not: "ENDED" } },
-            select: { id: true },
-            take: 1,
-          },
-        },
-        orderBy: { expectedEnd: "asc" },
-        // siteCity/siteState come through on the model itself.
-      }),
-      /* The other half. Converting a quote marks trailers DEPLOYED immediately,
-       but nothing physically moves until someone books a truck — so a new
-       subscription with no delivery on the calendar is a customer waiting on
-       equipment nobody has dispatched.
-
-       Deliberately scoped to recent and upcoming starts: without the date bound
-       this matches every subscription in two years of history that predates
-       dispatch (101 of them), which would bury the handful that are actionable. */
-      prisma.subscription.findMany({
-        where: {
-          status: { not: "ENDED" },
-          startDate: { gte: addDays(now, -14) },
-          dispatchJobs: {
-            none: {
-              type: "DELIVERY",
-              status: { in: ["SCHEDULED", "IN_PROGRESS", "DONE"] },
-            },
-          },
-        },
-        include: {
-          company: { select: { name: true } },
-          project: { select: { name: true, siteCity: true, siteState: true } },
-          _count: { select: { deployments: true } },
-        },
-        orderBy: { startDate: "asc" },
-      }),
+      // Shared with the Fleet dashboard — one definition of each queue, so the
+      // two surfaces can't drift. See src/lib/dispatch-queues.ts for the
+      // reasoning behind the scoping.
+      getPickupQueue(),
+      getDeliveryQueue(),
     ]);
 
   const subscriptionOptions = activeSubs.map((s) => ({
@@ -174,20 +125,20 @@ export default async function DispatchPage({
             <div className="divide-y">
               {deliveriesNeeded.map((s) => (
                 <div
-                  key={s.id}
+                  key={s.subscriptionId}
                   className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium">{s.company.name}</p>
+                    <p className="font-medium">{s.company}</p>
                     <p className="text-xs text-muted-foreground">
-                      {s.project?.name ?? "No job linked"}
-                      {s.project?.siteCity && ` · ${s.project.siteCity}`}
-                      {s.project?.siteState && `, ${s.project.siteState}`}
+                      {s.jobName ?? "No job linked"}
+                      {s.siteCity && ` · ${s.siteCity}`}
+                      {s.siteState && `, ${s.siteState}`}
                       {" · starts "}
                       {formatDate(s.startDate)}
                       {" · "}
-                      {s._count.deployments > 0 ? (
-                        `${s._count.deployments} unit${s._count.deployments === 1 ? "" : "s"}`
+                      {s.units > 0 ? (
+                        `${s.units} unit${s.units === 1 ? "" : "s"}`
                       ) : (
                         <span className="text-destructive">
                           no units assigned yet
@@ -201,7 +152,7 @@ export default async function DispatchPage({
                     triggerLabel="Schedule delivery"
                     prefill={{
                       type: "DELIVERY",
-                      subscriptionId: s.id,
+                      subscriptionId: s.subscriptionId,
                       // Its start date if that's still ahead of us, otherwise
                       // tomorrow — it's already overdue.
                       scheduledFor: format(
@@ -235,29 +186,29 @@ export default async function DispatchPage({
             <div className="divide-y">
               {pickupsNeeded.map((p) => (
                 <div
-                  key={p.id}
+                  key={p.projectId}
                   className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
                 >
                   <div className="min-w-0">
                     {/* Customer first: a dispatcher thinks "Seminole Paving in
                         Fort Myers", not "Fort Myers Warehouse Phase 1". */}
-                    <p className="font-medium">{p.company.name}</p>
+                    <p className="font-medium">{p.company}</p>
                     <p className="text-xs text-muted-foreground">
-                      {p.name}
+                      {p.jobName}
                       {p.siteCity && ` · ${p.siteCity}`}
                       {p.siteState && `, ${p.siteState}`}
                       {" · est. end "}
                       {formatDate(p.expectedEnd)}
                     </p>
                   </div>
-                  {p.subscriptions[0] && (
+                  {p.subscriptionId && (
                     <JobFormDialog
                       drivers={drivers}
                       subscriptions={subscriptionOptions}
                       triggerLabel="Schedule pickup"
                       prefill={{
                         type: "PICKUP",
-                        subscriptionId: p.subscriptions[0].id,
+                        subscriptionId: p.subscriptionId,
                         scheduledFor: p.expectedEnd
                           ? format(p.expectedEnd, "yyyy-MM-dd'T'09:00")
                           : undefined,
