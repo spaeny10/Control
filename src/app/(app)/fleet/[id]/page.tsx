@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { statusBadgeVariant } from "@/lib/badges";
+import { MapPin } from "lucide-react";
 
 export const metadata = { title: "Trailer" };
 
@@ -33,7 +34,20 @@ export default async function TrailerDetailPage({
           subscription: {
             include: {
               company: { select: { id: true, name: true } },
-              project: { select: { id: true, name: true } },
+              project: {
+                select: {
+                  id: true,
+                  name: true,
+                  siteStreet: true,
+                  siteCity: true,
+                  siteState: true,
+                  siteZip: true,
+                },
+              },
+              // Who to call from the yard if the unit isn't where we think.
+              siteContact: {
+                select: { firstName: true, lastName: true, phone: true },
+              },
               deployments: { select: { id: true, returnedAt: true } },
             },
           },
@@ -49,6 +63,30 @@ export default async function TrailerDetailPage({
   if (!trailer) notFound();
 
   const currentDeployment = trailer.deployments.find((d) => !d.returnedAt);
+
+  /* The jobsite address, assembled from whatever's on file. Most existing jobs
+     predate the address being required at conversion, so city/state is common
+     and street is not — worth showing what we have while being clear it isn't
+     navigable. */
+  const site = currentDeployment?.subscription.project;
+  const siteStreetKnown = !!site?.siteStreet;
+  const siteAddress =
+    [
+      site?.siteStreet,
+      [site?.siteCity, site?.siteState].filter(Boolean).join(", "),
+      site?.siteZip,
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
+  // Only offer directions when there's a street to route to.
+  const mapsHref =
+    siteStreetKnown && siteAddress
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+          [site?.siteStreet, site?.siteCity, site?.siteState, site?.siteZip]
+            .filter(Boolean)
+            .join(", ")
+        )}`
+      : null;
   const totalMaintenanceCost = trailer.maintenanceLogs.reduce(
     (sum, log) => sum + (log.cost ? Number(log.cost) : 0),
     0
@@ -160,7 +198,7 @@ export default async function TrailerDetailPage({
                   unitNumber={trailer.unitNumber}
                 />
               </CardHeader>
-              <CardContent className="text-sm">
+              <CardContent className="space-y-2 text-sm">
                 <p>
                   <span className="text-muted-foreground">Site: </span>
                   {/* Plain text — see fleet/page.tsx: fleet users can't reach
@@ -169,6 +207,34 @@ export default async function TrailerDetailPage({
                     {currentDeployment.subscription.project?.name ?? "—"}
                   </span>
                 </p>
+                {/* Where the unit physically is. A yard hand looking this up
+                    needs an address they can drive to, so a city with no street
+                    is called out rather than passed off as an address. */}
+                <div>
+                  <span className="text-muted-foreground">Address: </span>
+                  {siteAddress ? (
+                    <>
+                      <span className="font-medium">{siteAddress}</span>
+                      {mapsHref && (
+                        <a
+                          href={mapsHref}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="ml-2 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          <MapPin className="h-3 w-3" /> Directions
+                        </a>
+                      )}
+                      {!siteStreetKnown && (
+                        <span className="ml-2 text-xs text-destructive">
+                          no street address on file
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-destructive">not on file</span>
+                  )}
+                </div>
                 <p>
                   <span className="text-muted-foreground">Customer: </span>
                   <Link
@@ -178,6 +244,23 @@ export default async function TrailerDetailPage({
                     {currentDeployment.subscription.company.name}
                   </Link>
                 </p>
+                {currentDeployment.subscription.siteContact && (
+                  <p>
+                    <span className="text-muted-foreground">Site contact: </span>
+                    <span className="font-medium">
+                      {currentDeployment.subscription.siteContact.firstName}{" "}
+                      {currentDeployment.subscription.siteContact.lastName}
+                    </span>
+                    {currentDeployment.subscription.siteContact.phone && (
+                      <a
+                        href={`tel:${currentDeployment.subscription.siteContact.phone}`}
+                        className="ml-2 text-primary hover:underline"
+                      >
+                        {currentDeployment.subscription.siteContact.phone}
+                      </a>
+                    )}
+                  </p>
+                )}
                 <p>
                   <span className="text-muted-foreground">Since: </span>
                   {formatDate(currentDeployment.deployedAt)}
