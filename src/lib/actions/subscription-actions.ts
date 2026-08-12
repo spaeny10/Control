@@ -266,10 +266,14 @@ export async function convertQuoteToSubscription(input: {
   }
 
   // ---- Local records ----
+  /* Activation is what billing anchors to — the customer owes from the day the
+     rental goes live, not from whenever the quote happened to close. */
+  const activationDate = startDate ? new Date(startDate) : new Date();
+
   const subscription = await prisma.subscription.create({
     data: {
       status: "ACTIVE",
-      startDate: startDate ? new Date(startDate) : new Date(),
+      startDate: activationDate,
       billingCycle,
       cycleAmount,
       mrr,
@@ -282,6 +286,13 @@ export async function convertQuoteToSubscription(input: {
       siteContactId: quote.contactId,
       cardPaymentAllowed,
       convenienceFeePct,
+      /* Billing is ours now. Rent is charged in advance and the first invoice
+         goes out the day the subscription activates, so the anchor and the first
+         due date are both the activation date. lastInvoicedThrough stays null
+         until the first invoice, which is what marks it as the first — that's
+         when delivery and setup ride along. */
+      billingAnchor: activationDate,
+      nextInvoiceDate: activationDate,
       // Commission attribution: the lead owner won this; fall back to
       // whoever converted the quote.
       salespersonId: quote.lead?.ownerId ?? session.user.id,

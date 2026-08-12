@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAccountingKpis } from "@/lib/kpi";
+import { getDueInvoiceQueue } from "@/lib/billing";
 import { StatTiles, type StatTile } from "@/components/dashboard/stat-tiles";
 import {
   MrrTrendChart,
@@ -27,8 +28,15 @@ import {
 /* The books' morning view: what's billing, what's overdue, what's been sold
    but isn't billing yet, and what revenue is about to roll off. */
 export async function AccountingDashboard({ months }: { months: number }) {
-  const kpis = await getAccountingKpis(months);
+  const [kpis, dueToRaise] = await Promise.all([
+    getAccountingKpis(months),
+    getDueInvoiceQueue(),
+  ]);
   const now = new Date();
+  /* We own the billing schedule, so a scheduled run that quietly stops is the
+     one failure nobody would notice — an unbilled cycle looks like nothing at
+     all. Anything sitting here more than a day means the run isn't firing. */
+  const staleDue = dueToRaise.filter((d) => d.daysLate >= 1);
 
   const tiles: StatTile[] = [
     {
@@ -98,6 +106,61 @@ export async function AccountingDashboard({ months }: { months: number }) {
       </div>
 
       <StatTiles tiles={tiles} />
+
+      {/* Invoices the billing run owes. Ahead of everything else: an invoice
+          that was never raised is revenue that never gets asked for. */}
+      {dueToRaise.length > 0 && (
+        <Card
+          className={cn(staleDue.length > 0 && "border-destructive/50")}
+        >
+          <CardHeader>
+            <CardTitle className="text-base">
+              Invoices due to be raised ({dueToRaise.length})
+            </CardTitle>
+            <CardDescription>
+              {staleDue.length > 0
+                ? `${staleDue.length} of these has been due for a day or more — the billing run may not be firing.`
+                : "The next billing run will raise these. Rent is billed in advance, so each covers the period it starts."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {dueToRaise.slice(0, 10).map((d) => (
+                <div
+                  key={d.subscriptionId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/subscriptions/${d.subscriptionId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {d.company}
+                    </Link>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {d.jobName ?? "No job linked"} · covers{" "}
+                      {formatDate(d.periodStart)} – {formatDate(d.periodEnd)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-sm font-medium">
+                      {formatCurrency(d.cycleAmount)}
+                    </span>
+                    {d.daysLate >= 1 && (
+                      <Badge variant="destructive">{d.daysLate}d late</Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {dueToRaise.length > 10 && (
+              <p className="pt-2 text-xs text-muted-foreground">
+                Showing 10 of {dueToRaise.length}.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Money that should be moving but isn't — the two attention cards. */}
       {kpis.acceptedUnconverted.length > 0 && (

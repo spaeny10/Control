@@ -543,6 +543,10 @@ model Subscription {
   nextInvoiceDate      DateTime?
   lastInvoicedThrough  DateTime?
   minimumTermDays      Int?
+  /* Net terms in days. Lives here rather than in Stripe because we set the due
+     date ourselves — the old Stripe path hardcoded 30, which quietly
+     contradicted the net 45 these customers actually get. */
+  paymentTermsDays     Int                    @default(45)
   billingContactId     String?
   billingContact       Contact?               @relation("SubscriptionBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
   siteContactId        String?
