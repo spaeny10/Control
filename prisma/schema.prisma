@@ -484,6 +484,7 @@ model PlanProduct {
   prices         ProductPrice[]
   quoteLineItems QuoteLineItem[]
   companyPrices  CompanyPrice[]
+  invoiceLines   InvoiceLineItem[]
 }
 
 model ProductPrice {
@@ -530,6 +531,18 @@ model Subscription {
      negotiated rate sticks with the deal. */
   cardPaymentAllowed   Boolean                @default(false)
   convenienceFeePct    Decimal?               @db.Decimal(5, 2)
+  /* Billing schedule, owned here rather than by Stripe.
+
+     billingAnchor is the delivery date, not the signup date — the customer owes
+     from when the trailers landed, which is often days after the quote closed.
+     lastInvoicedThrough is the high-water mark that makes a billing run
+     idempotent: a re-run can't double-bill a period already covered.
+     minimumTermDays holds a contractual minimum so a job cut short still bills
+     the floor rather than the days used. */
+  billingAnchor        DateTime?
+  nextInvoiceDate      DateTime?
+  lastInvoicedThrough  DateTime?
+  minimumTermDays      Int?
   billingContactId     String?
   billingContact       Contact?               @relation("SubscriptionBillingContact", fields: [billingContactId], references: [id], onDelete: SetNull)
   siteContactId        String?
@@ -552,10 +565,15 @@ model Subscription {
 }
 
 // Mirror of Stripe invoices, synced via webhook.
+/* We raise and send invoices ourselves; Stripe is only involved when a customer
+   wants to pay by card. So this is the source of truth, not a mirror — the
+   number is ours, the line items are ours, and stripeInvoiceId is set only if a
+   card-payment invoice was created on request. */
 model Invoice {
   id               String        @id @default(cuid())
-  stripeInvoiceId  String        @unique
-  number           String?
+  // Ours: INV-2026-0001, matching the quote numbering convention.
+  number           String        @unique
+  stripeInvoiceId  String?       @unique
   status           InvoiceStatus @default(DRAFT)
   amountDue        Decimal       @default(0) @db.Decimal(12, 2)
   amountPaid       Decimal       @default(0) @db.Decimal(12, 2)
@@ -584,13 +602,56 @@ model Invoice {
      webhook can't bill it twice. */
   paidByCard       Boolean       @default(false)
   convenienceFeeAmount Decimal?  @db.Decimal(12, 2)
+  /* When we emailed it, so a run can tell "raised" from "sent" and nothing goes
+     out twice. */
+  sentAt           DateTime?
   subscriptionId   String?
   subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
+  lineItems        InvoiceLineItem[]
+
   @@index([subscriptionId])
   @@index([status])
+  @@index([taxReportedAt])
+  @@index([taxNeedsReview])
+}
+
+/* What each line represents. Kind drives both presentation and behaviour: TAX
+   lines are never themselves taxed, and CONVENIENCE_FEE only appears after a
+   card payment on a previous invoice. */
+enum InvoiceLineKind {
+  RENT
+  ONE_TIME
+  TAX
+  CONVENIENCE_FEE
+  CREDIT
+  ADJUSTMENT
+}
+
+model InvoiceLineItem {
+  id            String          @id @default(cuid())
+  invoiceId     String
+  invoice       Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  kind          InvoiceLineKind
+  description   String
+  /* Fractional so a part-period reads honestly — 11 of 30 days at the monthly
+     rate is quantity 0.367, not a rounded amount with no explanation. */
+  quantity      Decimal         @db.Decimal(12, 3)
+  unitPrice     Decimal         @db.Decimal(12, 2)
+  // Stored rather than derived, so a historical invoice can never re-compute.
+  amount        Decimal         @db.Decimal(12, 2)
+  // The window this line covers, when it's a partial or shifted period.
+  periodStart   DateTime?
+  periodEnd     DateTime?
+  // Carries the TIC through to tax calculation.
+  planProductId String?
+  planProduct   PlanProduct?    @relation(fields: [planProductId], references: [id], onDelete: SetNull)
+  sortOrder     Int             @default(0)
+
+  @@index([invoiceId])
+  @@index([planProductId])
 }
 
 // ---------- Dispatch ----------

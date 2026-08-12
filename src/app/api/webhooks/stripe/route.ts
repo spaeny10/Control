@@ -21,63 +21,52 @@ function mapInvoiceStatus(status: Stripe.Invoice.Status | null): InvoiceStatus {
   }
 }
 
-async function upsertInvoice(invoice: Stripe.Invoice) {
-  // Older/newer API shapes expose the subscription ref differently.
-  const subRef =
-    (invoice as unknown as { subscription?: string | { id: string } })
-      .subscription ??
-    invoice.parent?.subscription_details?.subscription ??
-    null;
-  const stripeSubscriptionId =
-    typeof subRef === "string" ? subRef : (subRef?.id ?? null);
+/* Match-only, never create.
 
-  const subscription = stripeSubscriptionId
-    ? await prisma.subscription.findUnique({
-        where: { stripeSubscriptionId },
-      })
-    : null;
+   We raise invoices; Stripe is a payment rail for the minority who pay by card,
+   so a Stripe invoice always corresponds to one of ours that we pushed. If
+   there's no match, that's a Stripe object we didn't create — most likely made
+   in their dashboard — and inventing a local row for it would put an invoice
+   with a fabricated number into the books. Log and ignore instead.
 
-  await prisma.invoice.upsert({
-    where: { stripeInvoiceId: invoice.id! },
-    create: {
-      stripeInvoiceId: invoice.id!,
-      number: invoice.number,
+   Our own fields are never overwritten: the number, the line items, and the
+   amounts we computed are the record. Only payment state comes back from
+   Stripe. */
+async function recordStripePayment(invoice: Stripe.Invoice) {
+  if (!invoice.id) return null;
+
+  const existing = await prisma.invoice.findUnique({
+    where: { stripeInvoiceId: invoice.id },
+    select: { id: true, subscriptionId: true },
+  });
+  if (!existing) {
+    console.warn(
+      `[stripe webhook] no local invoice for ${invoice.id} — ignoring. ` +
+        `Invoices are raised in the app; Stripe only collects card payments.`
+    );
+    return null;
+  }
+
+  await prisma.invoice.update({
+    where: { id: existing.id },
+    data: {
       status: mapInvoiceStatus(invoice.status),
-      amountDue: invoice.amount_due / 100,
       amountPaid: invoice.amount_paid / 100,
-      currency: invoice.currency,
+      // Stripe owns these two because it hosts the payment page.
       hostedInvoiceUrl: invoice.hosted_invoice_url,
       pdfUrl: invoice.invoice_pdf,
-      dueDate: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
       paidAt:
         invoice.status_transitions?.paid_at != null
           ? new Date(invoice.status_transitions.paid_at * 1000)
           : null,
-      periodStart: invoice.period_start
-        ? new Date(invoice.period_start * 1000)
-        : null,
-      periodEnd: invoice.period_end
-        ? new Date(invoice.period_end * 1000)
-        : null,
-      subscriptionId: subscription?.id,
-    },
-    update: {
-      number: invoice.number,
-      status: mapInvoiceStatus(invoice.status),
-      amountDue: invoice.amount_due / 100,
-      amountPaid: invoice.amount_paid / 100,
-      hostedInvoiceUrl: invoice.hosted_invoice_url,
-      pdfUrl: invoice.invoice_pdf,
-      dueDate: invoice.due_date ? new Date(invoice.due_date * 1000) : null,
-      paidAt:
-        invoice.status_transitions?.paid_at != null
-          ? new Date(invoice.status_transitions.paid_at * 1000)
-          : null,
-      subscriptionId: subscription?.id,
     },
   });
 
-  return subscription;
+  return existing.subscriptionId
+    ? await prisma.subscription.findUnique({
+        where: { id: existing.subscriptionId },
+      })
+    : null;
 }
 
 export async function POST(req: Request) {
@@ -104,20 +93,22 @@ export async function POST(req: Request) {
   }
 
   switch (event.type) {
-    /* The only window where the invoice is still a draft we can add a line to.
-       Sales tax is per-invoice because every recurring period is its own
-       taxable transaction at whatever rate applies then. Failure-isolated: an
-       untaxed invoice is recoverable, an invoice that never sends is not. */
+    /* Only fires for card-payment invoices we pushed to Stripe ourselves.
+       Tax is now calculated when the invoice is raised in the app, not by
+       patching a Stripe draft, so this only runs for a Stripe invoice that
+       somehow lacks it — and does nothing when the invoice isn't ours. */
     case "invoice.created": {
       const invoice = event.data.object as Stripe.Invoice;
-      await upsertInvoice(invoice);
-      try {
-        await applyTaxToDraftInvoice(stripe, invoice);
-      } catch (err) {
-        console.error(
-          "[stripe webhook] tax on draft invoice failed:",
-          err instanceof Error ? err.message : err
-        );
+      const matched = await recordStripePayment(invoice);
+      if (matched !== null || invoice.id) {
+        try {
+          await applyTaxToDraftInvoice(stripe, invoice);
+        } catch (err) {
+          console.error(
+            "[stripe webhook] tax on draft invoice failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
       }
       break;
     }
@@ -126,7 +117,7 @@ export async function POST(req: Request) {
     case "invoice.updated":
     case "invoice.paid": {
       const invoice = event.data.object as Stripe.Invoice;
-      const subscription = await upsertInvoice(invoice);
+      const subscription = await recordStripePayment(invoice);
       if (event.type === "invoice.paid") {
         // Cash-basis filing: the transaction reaches TaxCloud now, not when the
         // invoice was raised.
@@ -166,7 +157,7 @@ export async function POST(req: Request) {
 
     case "invoice.payment_failed": {
       const invoice = event.data.object as Stripe.Invoice;
-      const subscription = await upsertInvoice(invoice);
+      const subscription = await recordStripePayment(invoice);
       if (subscription && subscription.status === "ACTIVE") {
         await prisma.subscription.update({
           where: { id: subscription.id },
