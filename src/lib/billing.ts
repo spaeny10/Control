@@ -1,4 +1,10 @@
-import { addDays, addMonths, startOfDay, endOfDay } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  differenceInCalendarMonths,
+  startOfDay,
+  endOfDay,
+} from "date-fns";
 import type { BillingCycle } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { withInvoiceNumber } from "@/lib/invoice-number";
@@ -18,7 +24,18 @@ import { calculateTax, commitOrder, isTaxCloudConfigured } from "@/lib/taxcloud"
 /** General tangible personal property — used when a line has no catalog product. */
 const DEFAULT_TIC = 0;
 
-export function periodEndFor(start: Date, cycle: BillingCycle): Date {
+/* The bill goes out on the same day of the month the billing started — an
+   anchor-day schedule. That makes MONTHLY the one cycle that can't be computed
+   from the previous boundary: chaining addMonths from Jan 31 gives Feb 28 and
+   then Mar 28, silently drifting the bill day to the 28th forever. Computing
+   every boundary from the ANCHOR instead means Feb clamps to the 28th (it has
+   no 31st) but March snaps back to the 31st. Fixed-length cycles don't have
+   this problem and roll from the previous boundary as before. */
+export function periodEndFor(
+  start: Date,
+  cycle: BillingCycle,
+  anchor?: Date | null
+): Date {
   switch (cycle) {
     case "DAILY":
       return addDays(start, 1);
@@ -26,8 +43,15 @@ export function periodEndFor(start: Date, cycle: BillingCycle): Date {
       return addDays(start, 7);
     case "EVERY_28_DAYS":
       return addDays(start, 28);
-    case "MONTHLY":
-      return addMonths(start, 1);
+    case "MONTHLY": {
+      if (!anchor) return addMonths(start, 1);
+      let months = differenceInCalendarMonths(start, anchor) + 1;
+      let end = addMonths(anchor, months);
+      // Safety: a hand-edited nextInvoiceDate could land where one hop back
+      // from the anchor isn't past the start. Never emit an empty period.
+      while (end <= start) end = addMonths(anchor, ++months);
+      return end;
+    }
     default:
       // ONE_TIME never recurs; treat as a single day so callers can't loop.
       return addDays(start, 1);
@@ -64,6 +88,7 @@ export async function getDueInvoiceQueue(asOf = new Date()): Promise<DueInvoice[
       id: true,
       cycleAmount: true,
       billingCycle: true,
+      billingAnchor: true,
       nextInvoiceDate: true,
       company: { select: { name: true } },
       project: { select: { name: true } },
@@ -77,7 +102,7 @@ export async function getDueInvoiceQueue(asOf = new Date()): Promise<DueInvoice[
       company: s.company.name,
       jobName: s.project?.name ?? null,
       periodStart,
-      periodEnd: periodEndFor(periodStart, s.billingCycle),
+      periodEnd: periodEndFor(periodStart, s.billingCycle, s.billingAnchor),
       cycleAmount: Number(s.cycleAmount),
       daysLate: Math.max(
         0,
@@ -113,6 +138,7 @@ export async function raiseInvoiceFor(
       companyId: true,
       cycleAmount: true,
       billingCycle: true,
+      billingAnchor: true,
       nextInvoiceDate: true,
       lastInvoicedThrough: true,
       paymentTermsDays: true,
@@ -153,7 +179,7 @@ export async function raiseInvoiceFor(
   }
 
   const periodStart = sub.nextInvoiceDate;
-  const periodEnd = periodEndFor(periodStart, sub.billingCycle);
+  const periodEnd = periodEndFor(periodStart, sub.billingCycle, sub.billingAnchor);
 
   // The high-water mark. Anything already covered is not billable again.
   if (sub.lastInvoicedThrough && sub.lastInvoicedThrough >= periodEnd) {
