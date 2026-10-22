@@ -17,13 +17,23 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { statusBadgeVariant } from "@/lib/badges";
+import { statusBadgeVariant, TRAILER_STATUS_LABEL } from "@/lib/badges";
 import { FilterPills } from "@/components/layout/filter-pills";
 import { SearchInput } from "@/components/layout/search-input";
 
 export const metadata = { title: "Fleet" };
 
 const GROUPS = ["none", "site", "customer"] as const;
+
+const STATUSES = [
+  "AVAILABLE",
+  "ASSIGNED",
+  "DEPLOYED",
+  "INSPECTION",
+  "MAINTENANCE",
+  "RETIRED",
+] as const;
+type Status = (typeof STATUSES)[number];
 type GroupBy = (typeof GROUPS)[number];
 
 /** Sorts last regardless of alphabet — units with no job aren't a "site". */
@@ -39,13 +49,12 @@ export default async function FleetPage({
   const groupBy: GroupBy = GROUPS.includes(group as GroupBy)
     ? (group as GroupBy)
     : "none";
-  const validStatus = ["AVAILABLE", "DEPLOYED", "MAINTENANCE", "RETIRED"].includes(
-    status ?? ""
-  )
-    ? (status as "AVAILABLE" | "DEPLOYED" | "MAINTENANCE" | "RETIRED")
+  const validStatus = STATUSES.includes(status as Status)
+    ? (status as Status)
     : undefined;
 
-  // Only the open deployment tells us where a unit is now.
+  /* The open deployment says which job a unit belongs to — whether it's on
+     site yet is deliveredAt. */
   const onSiteNow = { returnedAt: null };
 
   const trailers = await prisma.trailer.findMany({
@@ -120,6 +129,8 @@ export default async function FleetPage({
     total: trailers.length,
     available: trailers.filter((t) => t.status === "AVAILABLE").length,
     deployed: trailers.filter((t) => t.status === "DEPLOYED").length,
+    assigned: trailers.filter((t) => t.status === "ASSIGNED").length,
+    inspection: trailers.filter((t) => t.status === "INSPECTION").length,
     maintenance: trailers.filter((t) => t.status === "MAINTENANCE").length,
   };
   const activeFleet = counts.total
@@ -149,7 +160,7 @@ export default async function FleetPage({
       if (!d) {
         key = YARD_KEY;
         label = "Not deployed";
-        sub = "available, in maintenance, or retired";
+        sub = "available, in inspection or maintenance, or retired";
       } else if (groupBy === "site") {
         key = d.subscription.project?.id ?? `${YARD_KEY}-nojob`;
         label = d.subscription.project?.name ?? "Deployed, no job linked";
@@ -193,7 +204,9 @@ export default async function FleetPage({
           {t.model ?? "—"}
         </TableCell>
         <TableCell>
-          <Badge variant={statusBadgeVariant(t.status)}>{t.status}</Badge>
+          <Badge variant={statusBadgeVariant(t.status)}>
+            {TRAILER_STATUS_LABEL[t.status]}
+          </Badge>
         </TableCell>
         <TableCell>
           {/* Plain text: a fleet-only user has no Accounting area, so linking
@@ -201,9 +214,11 @@ export default async function FleetPage({
           {deployment?.subscription.project?.name ? (
             <>
               {deployment.subscription.project.name}
-              {city && (
+              {(city || !deployment.deliveredAt) && (
                 <span className="block text-xs text-muted-foreground">
-                  {city}
+                  {[city, !deployment.deliveredAt && "awaiting delivery"]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
               )}
             </>
@@ -236,12 +251,7 @@ export default async function FleetPage({
             param="status"
             current={validStatus}
             keepParams={{ q: search, group: groupBy === "none" ? undefined : groupBy }}
-            options={[
-              { value: "AVAILABLE", label: "Available" },
-              { value: "DEPLOYED", label: "Deployed" },
-              { value: "MAINTENANCE", label: "Maintenance" },
-              { value: "RETIRED", label: "Retired" },
-            ]}
+            options={STATUSES.map((v) => ({ value: v, label: TRAILER_STATUS_LABEL[v] }))}
           />
           <TrailerFormDialog />
         </div>
@@ -278,7 +288,7 @@ export default async function FleetPage({
         {[
           { label: "Total units", value: counts.total },
           { label: "Available", value: counts.available },
-          { label: "Deployed", value: counts.deployed },
+          { label: "On site", value: counts.deployed },
           { label: "Utilization", value: `${utilization}%` },
         ].map((stat) => (
           <Card key={stat.label}>

@@ -14,7 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { statusBadgeVariant } from "@/lib/badges";
+import { statusBadgeVariant, TRAILER_STATUS_LABEL } from "@/lib/badges";
 import { MapPin } from "lucide-react";
 
 export const metadata = { title: "Trailer" };
@@ -92,28 +92,37 @@ export default async function TrailerDetailPage({
     0
   );
 
-  // Unit economics: revenue attributed to this unit is estimated by splitting
-  // each subscription's normalized monthly value evenly across its units for
-  // the days this unit was on site.
+  /* Unit economics. Utilization counts days physically on site (delivery to
+     return). Revenue only counts the part of that when the contract was also
+     billing — a unit dropped early, or awaiting pickup after billing ended,
+     is on site but earning nothing. Each subscription's monthly value is split
+     evenly across its units. */
   const now = new Date();
+  const DAY = 86_400_000;
   let deployedDays = 0;
   let revenueEstimate = 0;
   for (const d of trailer.deployments) {
+    if (!d.deliveredAt) continue;
     const end = d.returnedAt ?? now;
-    const days = Math.max(
-      0,
-      (end.getTime() - d.deployedAt.getTime()) / 86_400_000
-    );
-    deployedDays += days;
+    deployedDays += Math.max(0, (end.getTime() - d.deliveredAt.getTime()) / DAY);
+    const billFrom = d.subscription.activatedAt;
+    if (!billFrom) continue;
+    const billTo = d.subscription.endedAt ?? now;
+    const from = Math.max(d.deliveredAt.getTime(), billFrom.getTime());
+    const to = Math.min(end.getTime(), billTo.getTime());
+    const days = Math.max(0, (to - from) / DAY);
     const siblingDeployments = d.subscription.deployments;
     const openUnits = siblingDeployments.filter((x) => !x.returnedAt).length;
     const unitCount = Math.max(1, openUnits || siblingDeployments.length);
     revenueEstimate += (days / 30.44) * (Number(d.subscription.mrr) / unitCount);
   }
-  const lifeDays = Math.max(
-    1,
-    (now.getTime() - trailer.createdAt.getTime()) / 86_400_000
+  /* From whichever came first: units imported with history have deployments
+     older than their own record, which would push utilization past 100%. */
+  const lifeStart = Math.min(
+    trailer.createdAt.getTime(),
+    ...trailer.deployments.map((d) => d.deployedAt.getTime())
   );
+  const lifeDays = Math.max(1, (now.getTime() - lifeStart) / DAY);
   const lifetimeUtilization = Math.min(
     100,
     Math.round((deployedDays / lifeDays) * 100)
@@ -129,7 +138,7 @@ export default async function TrailerDetailPage({
               {trailer.unitNumber}
             </h1>
             <Badge variant={statusBadgeVariant(trailer.status)}>
-              {trailer.status}
+              {TRAILER_STATUS_LABEL[trailer.status]}
             </Badge>
           </div>
           <p className="text-muted-foreground">{trailer.model ?? "—"}</p>
@@ -192,10 +201,15 @@ export default async function TrailerDetailPage({
           {currentDeployment && (
             <Card className="border-primary/50">
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-base">Currently deployed</CardTitle>
+                <CardTitle className="text-base">
+                  {currentDeployment.deliveredAt
+                    ? "Currently on site"
+                    : "Assigned — awaiting delivery"}
+                </CardTitle>
                 <ReturnTrailerButton
                   deploymentId={currentDeployment.id}
                   unitNumber={trailer.unitNumber}
+                  delivered={!!currentDeployment.deliveredAt}
                 />
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
@@ -262,8 +276,22 @@ export default async function TrailerDetailPage({
                   </p>
                 )}
                 <p>
-                  <span className="text-muted-foreground">Since: </span>
-                  {formatDate(currentDeployment.deployedAt)}
+                  <span className="text-muted-foreground">
+                    {currentDeployment.deliveredAt ? "On site since: " : "Assigned: "}
+                  </span>
+                  {formatDate(
+                    currentDeployment.deliveredAt ?? currentDeployment.deployedAt
+                  )}
+                </p>
+                {/* Physical and billing state are independent — say which
+                    one this unit is in, since a yard hand can't see billing. */}
+                <p>
+                  <span className="text-muted-foreground">Billing: </span>
+                  {currentDeployment.subscription.status === "PENDING"
+                    ? "not started yet"
+                    : currentDeployment.subscription.status === "ENDED"
+                      ? "ended — awaiting pickup"
+                      : "active"}
                 </p>
               </CardContent>
             </Card>
@@ -291,11 +319,20 @@ export default async function TrailerDetailPage({
                             d.subscription.company.name}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {formatDate(d.deployedAt)} →{" "}
-                          {d.returnedAt ? formatDate(d.returnedAt) : "present"}
+                          {d.deliveredAt
+                            ? `${formatDate(d.deliveredAt)} → ${
+                                d.returnedAt ? formatDate(d.returnedAt) : "present"
+                              }`
+                            : d.returnedAt
+                              ? `Assigned ${formatDate(d.deployedAt)}, released before delivery`
+                              : `Assigned ${formatDate(d.deployedAt)}`}
                         </p>
                       </div>
-                      {!d.returnedAt && <Badge>On site</Badge>}
+                      {!d.returnedAt && (
+                        <Badge variant={d.deliveredAt ? "default" : "outline"}>
+                          {d.deliveredAt ? "On site" : "Awaiting delivery"}
+                        </Badge>
+                      )}
                     </div>
                   ))}
                 </div>

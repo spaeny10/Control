@@ -21,10 +21,18 @@ export function TrailerStatusSelect({
 }) {
   const [isPending, startTransition] = useTransition();
 
+  // Set by dispatch, not by hand.
   if (status === "DEPLOYED") {
     return (
       <p className="text-sm text-muted-foreground">
-        Deployed — return it from its site to change status.
+        On site — a pickup job brings it back.
+      </p>
+    );
+  }
+  if (status === "ASSIGNED") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Assigned to a job — a delivery job puts it on site.
       </p>
     );
   }
@@ -44,11 +52,19 @@ export function TrailerStatusSelect({
       }}
       disabled={isPending}
     >
-      <SelectTrigger className="w-40">
+      <SelectTrigger className="w-48">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="AVAILABLE">Available</SelectItem>
+        {/* Only reachable by a pickup; listed so the current value renders. */}
+        {status === "INSPECTION" && (
+          <SelectItem value="INSPECTION" disabled>
+            Awaiting inspection
+          </SelectItem>
+        )}
+        <SelectItem value="AVAILABLE">
+          {status === "INSPECTION" ? "Passed — available" : "Available"}
+        </SelectItem>
         <SelectItem value="MAINTENANCE">Maintenance</SelectItem>
         <SelectItem value="RETIRED">Retired</SelectItem>
       </SelectContent>

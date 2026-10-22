@@ -31,8 +31,9 @@ export default async function PortalPage({
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
         include: {
           project: { select: { name: true } },
+          // What the customer can see on their site — not units still in our yard.
           deployments: {
-            where: { returnedAt: null },
+            where: { returnedAt: null, deliveredAt: { not: null } },
             include: { trailer: { select: { unitNumber: true } } },
           },
           invoices: {
@@ -140,8 +141,10 @@ export default async function PortalPage({
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {formatCurrency(Number(s.cycleAmount))}
-                      {CYCLE_SUFFIX[s.billingCycle]} · since{" "}
-                      {formatDate(s.startDate)}
+                      {CYCLE_SUFFIX[s.billingCycle]}
+                      {s.activatedAt
+                        ? ` · since ${formatDate(s.activatedAt)}`
+                        : " · billing not started"}
                       {s.deployments.length > 0 &&
                         ` · units on site: ${s.deployments
                           .map((d) => d.trailer.unitNumber)

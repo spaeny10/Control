@@ -4,6 +4,7 @@ import { getDeliveryQueue, getPickupQueue } from "@/lib/dispatch-queues";
 import { JobFormDialog } from "@/components/dispatch/job-form-dialog";
 import { JobCard, type DispatchJobView } from "@/components/dispatch/job-card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
@@ -55,7 +56,13 @@ export default async function DispatchPage({
         select: { id: true, name: true },
       }),
       prisma.subscription.findMany({
-        where: { status: { not: "ENDED" } },
+        // An ended contract with units still on site still needs a pickup.
+        where: {
+          OR: [
+            { status: { not: "ENDED" } },
+            { deployments: { some: { returnedAt: null } } },
+          ],
+        },
         include: {
           company: { select: { name: true } },
           project: { select: { name: true } },
@@ -107,8 +114,9 @@ export default async function DispatchPage({
         </div>
       </div>
 
-      {/* Trailers owed to a customer. Ahead of pickups because someone is
-          waiting on equipment that the system already counts as deployed. */}
+      {/* Units assigned to a contract and still in the yard. Delivery doesn't
+          start billing, so dropping them early is fine — but one that's
+          already billing is a customer paying for equipment they don't have. */}
       {deliveriesNeeded.length > 0 && (
         <Card className="border-[#2a78d6]/50">
           <CardHeader>
@@ -116,53 +124,62 @@ export default async function DispatchPage({
               Deliveries to schedule ({deliveriesNeeded.length})
             </CardTitle>
             <CardDescription>
-              These jobs started recently and have no delivery on the calendar.
-              Converting a quote marks the trailers deployed straight away, so
-              until a truck is booked the customer is still waiting.
+              Units assigned to a job but still in the yard, with no truck
+              booked. Delivering ahead of billing is fine; completing the
+              delivery job is what marks them on site.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="divide-y">
-              {deliveriesNeeded.map((s) => (
-                <div
-                  key={s.subscriptionId}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium">{s.company}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {s.jobName ?? "No job linked"}
-                      {s.siteCity && ` · ${s.siteCity}`}
-                      {s.siteState && `, ${s.siteState}`}
-                      {" · starts "}
-                      {formatDate(s.startDate)}
-                      {" · "}
-                      {s.units > 0 ? (
-                        `${s.units} unit${s.units === 1 ? "" : "s"}`
-                      ) : (
-                        <span className="text-destructive">
-                          no units assigned yet
-                        </span>
-                      )}
-                    </p>
+              {deliveriesNeeded.map((s) => {
+                const billing = s.billingStatus !== "PENDING";
+                return (
+                  <div
+                    key={s.subscriptionId}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium">
+                        {s.company}
+                        {billing && (
+                          <Badge variant="destructive" className="ml-2">
+                            Billing — not delivered
+                          </Badge>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {s.jobName ?? "No job linked"}
+                        {s.siteCity && ` · ${s.siteCity}`}
+                        {s.siteState && `, ${s.siteState}`}
+                        {` · ${s.units} unit${s.units === 1 ? "" : "s"}`}
+                        {" · "}
+                        {billing
+                          ? `billing since ${formatDate(s.activationDate)}`
+                          : s.activationDate
+                            ? `billing starts ${formatDate(s.activationDate)}`
+                            : "billing not scheduled"}
+                      </p>
+                    </div>
+                    <JobFormDialog
+                      drivers={drivers}
+                      subscriptions={subscriptionOptions}
+                      triggerLabel="Schedule delivery"
+                      prefill={{
+                        type: "DELIVERY",
+                        subscriptionId: s.subscriptionId,
+                        // Ahead of billing if that's still in the future,
+                        // otherwise tomorrow — it's already late.
+                        scheduledFor: format(
+                          s.activationDate && s.activationDate > now
+                            ? s.activationDate
+                            : addDays(now, 1),
+                          "yyyy-MM-dd'T'09:00",
+                        ),
+                      }}
+                    />
                   </div>
-                  <JobFormDialog
-                    drivers={drivers}
-                    subscriptions={subscriptionOptions}
-                    triggerLabel="Schedule delivery"
-                    prefill={{
-                      type: "DELIVERY",
-                      subscriptionId: s.subscriptionId,
-                      // Its start date if that's still ahead of us, otherwise
-                      // tomorrow — it's already overdue.
-                      scheduledFor: format(
-                        s.startDate > now ? s.startDate : addDays(now, 1),
-                        "yyyy-MM-dd'T'09:00",
-                      ),
-                    }}
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -175,46 +192,59 @@ export default async function DispatchPage({
               Pickups to schedule ({pickupsNeeded.length})
             </CardTitle>
             <CardDescription>
-              These jobs are due to wind down within 30 days with no pickup
-              booked. The end date is our estimate, not the customer&apos;s word
-              — worth a call before you commit a truck. Collecting the trailers
-              doesn&apos;t stop billing; use End subscription on the job for
-              that.
+              Units on site with no pickup booked. &ldquo;Billing ended&rdquo;
+              is certain — the customer has stopped paying. &ldquo;Ending
+              soon&rdquo; is our estimate from the job&apos;s end date, so call
+              before committing a truck. Completing the pickup job returns the
+              units for inspection; it doesn&apos;t stop billing.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="divide-y">
               {pickupsNeeded.map((p) => (
                 <div
-                  key={p.projectId}
+                  key={p.subscriptionId}
                   className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
                 >
                   <div className="min-w-0">
                     {/* Customer first: a dispatcher thinks "Seminole Paving in
                         Fort Myers", not "Fort Myers Warehouse Phase 1". */}
-                    <p className="font-medium">{p.company}</p>
+                    <p className="font-medium">
+                      {p.company}
+                      <Badge
+                        variant={
+                          p.reason === "billing-ended" ? "destructive" : "outline"
+                        }
+                        className="ml-2"
+                      >
+                        {p.reason === "billing-ended"
+                          ? "Billing ended"
+                          : "Ending soon"}
+                      </Badge>
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      {p.jobName}
+                      {p.jobName ?? "No job linked"}
                       {p.siteCity && ` · ${p.siteCity}`}
                       {p.siteState && `, ${p.siteState}`}
-                      {" · est. end "}
-                      {formatDate(p.expectedEnd)}
+                      {` · ${p.units} unit${p.units === 1 ? "" : "s"} on site`}
+                      {p.reason === "billing-ended"
+                        ? ` · ended ${formatDate(p.date)}`
+                        : ` · est. end ${formatDate(p.date)}`}
                     </p>
                   </div>
-                  {p.subscriptionId && (
-                    <JobFormDialog
-                      drivers={drivers}
-                      subscriptions={subscriptionOptions}
-                      triggerLabel="Schedule pickup"
-                      prefill={{
-                        type: "PICKUP",
-                        subscriptionId: p.subscriptionId,
-                        scheduledFor: p.expectedEnd
-                          ? format(p.expectedEnd, "yyyy-MM-dd'T'09:00")
-                          : undefined,
-                      }}
-                    />
-                  )}
+                  <JobFormDialog
+                    drivers={drivers}
+                    subscriptions={subscriptionOptions}
+                    triggerLabel="Schedule pickup"
+                    prefill={{
+                      type: "PICKUP",
+                      subscriptionId: p.subscriptionId,
+                      scheduledFor: format(
+                        p.date && p.date > now ? p.date : addDays(now, 1),
+                        "yyyy-MM-dd'T'09:00",
+                      ),
+                    }}
+                  />
                 </div>
               ))}
             </div>
@@ -252,6 +282,7 @@ export default async function DispatchPage({
                     driverName: j.driver?.name ?? null,
                     companyName: j.subscription?.company.name ?? null,
                     notes: j.notes,
+                    units: j.trailerIds.length,
                   };
                   return <JobCard key={j.id} job={view} />;
                 })}

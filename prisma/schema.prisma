@@ -46,9 +46,21 @@ enum ProjectStatus {
   COMPLETED
 }
 
+/* A unit's PHYSICAL state. Deliberately independent of billing: a unit can be
+   delivered weeks before its subscription activates (a truck was already
+   heading that way), and billing can end before the pickup happens.
+
+     AVAILABLE   in the yard, free to rent
+     ASSIGNED    on a contract, still in the yard awaiting delivery
+     DEPLOYED    physically on a customer site (delivery job completed)
+     INSPECTION  back from a site, not yet checked — can't be rented until it is
+     MAINTENANCE in the shop
+     RETIRED     out of the fleet */
 enum TrailerStatus {
   AVAILABLE
+  ASSIGNED
   DEPLOYED
+  INSPECTION
   MAINTENANCE
   RETIRED
 }
@@ -327,7 +339,12 @@ model TrailerDeployment {
   trailer        Trailer      @relation(fields: [trailerId], references: [id], onDelete: Cascade)
   subscriptionId String
   subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  /* deployedAt is when the unit was ASSIGNED to this contract; deliveredAt is
+     when a driver actually set it down on site. They used to be the same moment
+     by assumption, which made "days on site" and utilization count from the
+     paperwork instead of the truck. Null deliveredAt = still in the yard. */
   deployedAt     DateTime     @default(now())
+  deliveredAt    DateTime?
   returnedAt     DateTime?
   notes          String?
 
@@ -533,8 +550,9 @@ model Subscription {
   convenienceFeePct    Decimal?               @db.Decimal(5, 2)
   /* Billing schedule, owned here rather than by Stripe.
 
-     billingAnchor is the delivery date, not the signup date — the customer owes
-     from when the trailers landed, which is often days after the quote closed.
+     billingAnchor is the activation date — not the signup date, and not the
+     delivery date either, since units are often dropped early when a truck is
+     already headed that way. Every invoice goes out on its day of the month.
      lastInvoicedThrough is the high-water mark that makes a billing run
      idempotent: a re-run can't double-bill a period already covered.
      minimumTermDays holds a contractual minimum so a job cut short still bills
@@ -543,6 +561,12 @@ model Subscription {
   nextInvoiceDate      DateTime?
   lastInvoicedThrough  DateTime?
   minimumTermDays      Int?
+  /* When billing actually started. Null = PENDING: the deal is signed and units
+     may even be on site, but nothing is billing yet. A scheduled activation is
+     a PENDING subscription with nextInvoiceDate set — the billing run activates
+     it that day. No date at all means it waits for someone to click Activate
+     ("when the GC says go"). */
+  activatedAt          DateTime?
   /* Net terms in days. Lives here rather than in Stripe because we set the due
      date ourselves — the old Stripe path hardcoded 30, which quietly
      contradicted the net 45 these customers actually get. */

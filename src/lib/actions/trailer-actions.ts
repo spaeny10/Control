@@ -71,8 +71,10 @@ export async function updateTrailer(
   return { ok: true, id };
 }
 
-// Manual status changes cover the non-deployment lifecycle. DEPLOYED is
-// set/cleared by deployment flows, never by hand.
+/* Manual status changes cover the yard lifecycle. ASSIGNED and DEPLOYED are set
+   by assignment and dispatch, never by hand. Clearing INSPECTION is the yard
+   signing a returned unit off — to Available, or to Maintenance if it came
+   back damaged. */
 export async function setTrailerStatus(
   id: string,
   status: "AVAILABLE" | "MAINTENANCE" | "RETIRED"
@@ -88,7 +90,7 @@ export async function setTrailerStatus(
   if (trailer.deployments.length > 0) {
     return {
       ok: false,
-      error: "Trailer is deployed — return it from its site first",
+      error: "Trailer is on a job — return or unassign it first",
     };
   }
 
@@ -96,7 +98,12 @@ export async function setTrailerStatus(
   await prisma.message.create({
     data: {
       channel: "SYSTEM",
-      body: `Status changed to ${status}`,
+      body:
+        trailer.status === "INSPECTION"
+          ? status === "AVAILABLE"
+            ? "Inspected — ready to deploy."
+            : `Inspected — moved to ${status.toLowerCase()}.`
+          : `Status changed to ${status}`,
       authorId: session.user.id,
       trailerId: id,
     },
@@ -138,9 +145,12 @@ export async function addMaintenanceLog(
   return { ok: true };
 }
 
-// Return a trailer from its current deployment. If it was the last unit on
-// the subscription this does NOT end the subscription — ending is a billing
-// decision made on the subscription page.
+/* Take a unit off its contract by hand — the escape hatch when a pickup
+   happened without a dispatch job. A unit that never left the yard is simply
+   released; one that was on site comes back for inspection first.
+
+   Never ends the subscription: ending is a billing decision made on the
+   subscription page. */
 export async function returnTrailer(
   deploymentId: string
 ): Promise<ActionResult> {
@@ -155,6 +165,8 @@ export async function returnTrailer(
   if (deployment.returnedAt)
     return { ok: false, error: "Already returned" };
 
+  const wasOnSite = deployment.deliveredAt !== null;
+  const unit = deployment.trailer.unitNumber;
   await prisma.$transaction([
     prisma.trailerDeployment.update({
       where: { id: deploymentId },
@@ -162,19 +174,32 @@ export async function returnTrailer(
     }),
     prisma.trailer.update({
       where: { id: deployment.trailerId },
-      data: { status: "AVAILABLE" },
+      data: { status: wasOnSite ? "INSPECTION" : "AVAILABLE" },
     }),
     prisma.message.create({
       data: {
         channel: "SYSTEM",
-        body: `Unit ${deployment.trailer.unitNumber} returned from site`,
+        body: wasOnSite
+          ? `Unit ${unit} returned from site — awaiting inspection`
+          : `Unit ${unit} unassigned before delivery — back to available`,
         authorId: session.user.id,
         trailerId: deployment.trailerId,
+      },
+    }),
+    prisma.message.create({
+      data: {
+        channel: "SYSTEM",
+        body: wasOnSite
+          ? `Unit ${unit} returned from site by hand (no pickup job).`
+          : `Unit ${unit} unassigned before delivery.`,
+        authorId: session.user.id,
+        subscriptionId: deployment.subscriptionId,
       },
     }),
   ]);
 
   revalidatePath("/fleet");
+  revalidatePath("/dispatch");
   revalidatePath(`/fleet/${deployment.trailerId}`);
   revalidatePath(`/subscriptions/${deployment.subscriptionId}`);
   return { ok: true };

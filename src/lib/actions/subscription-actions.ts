@@ -3,36 +3,13 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { getStripe, toCents } from "@/lib/stripe";
-import { STRIPE_INTERVALS, toMonthly } from "@/lib/cycles";
+import { getStripe } from "@/lib/stripe";
+import { toMonthly } from "@/lib/cycles";
+import { activateSubscription, isDueBy } from "@/lib/activation";
+import { raiseUntilCaughtUp } from "@/lib/billing";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "./company-actions";
 import type { Prisma, SubscriptionEndReason } from "@prisma/client";
-import type Stripe from "stripe";
-
-// Resolve (and cache) a Stripe Product for a quote line item. Catalog items
-// cache the product id on PlanProduct; ad-hoc lines get a one-off product.
-async function stripeProductFor(
-  stripe: Stripe,
-  item: { description: string; planProductId: string | null }
-): Promise<string> {
-  if (item.planProductId) {
-    const plan = await prisma.planProduct.findUnique({
-      where: { id: item.planProductId },
-    });
-    if (plan?.stripeProductId) return plan.stripeProductId;
-    const product = await stripe.products.create({ name: item.description });
-    if (plan) {
-      await prisma.planProduct.update({
-        where: { id: plan.id },
-        data: { stripeProductId: product.id },
-      });
-    }
-    return product.id;
-  }
-  const product = await stripe.products.create({ name: item.description });
-  return product.id;
-}
 
 const convertSchema = z.object({
   quoteId: z.string().min(1),
@@ -130,7 +107,6 @@ export async function convertQuoteToSubscription(input: {
   const recurringItems = quote.lineItems.filter(
     (i) => i.cycle !== "ONE_TIME"
   );
-  const oneTimeItems = quote.lineItems.filter((i) => i.cycle === "ONE_TIME");
 
   // All recurring items share one cycle (enforced at quote creation).
   const cycles = [...new Set(recurringItems.map((i) => i.cycle))];
@@ -151,7 +127,6 @@ export async function convertQuoteToSubscription(input: {
   // ---- Stripe (when configured) ----
   const stripe = getStripe();
   let stripeCustomerId = quote.company.stripeCustomerId;
-  let stripeSubscriptionId: string | null = null;
   let billingNote =
     "Billing: Stripe not connected — invoices must be handled manually until keys are configured.";
 
@@ -211,54 +186,13 @@ export async function convertQuoteToSubscription(input: {
         });
       }
 
-      const stripeInterval =
-        STRIPE_INTERVALS[billingCycle as Exclude<typeof billingCycle, "ONE_TIME">];
-      const recurringWithProducts = [];
-      for (const item of recurringItems) {
-        recurringWithProducts.push({
-          quantity: item.quantity,
-          price_data: {
-            currency: "usd",
-            unit_amount: toCents(Number(item.unitPrice)),
-            recurring: stripeInterval,
-            product: await stripeProductFor(stripe, item),
-          },
-        });
-      }
-      // One-time charges (delivery, setup) ride on the first invoice.
-      const oneTimeWithProducts = [];
-      for (const item of oneTimeItems) {
-        oneTimeWithProducts.push({
-          quantity: item.quantity,
-          price_data: {
-            currency: "usd",
-            unit_amount: toCents(Number(item.unitPrice)),
-            product: await stripeProductFor(stripe, item),
-          },
-        });
-      }
-
-      const subscription = await stripe.subscriptions.create({
-        customer: stripeCustomerId,
-        collection_method: "send_invoice",
-        days_until_due: 30,
-        items: recurringWithProducts,
-        add_invoice_items: oneTimeWithProducts,
-        /* Card is opt-in per the signed terms. Left unrestricted, Stripe's
-           hosted invoice would happily take a card on any invoice and leave us
-           paying the processing cost on a deal that never priced for it — so
-           when terms don't offer card, ACH is the only electronic option and
-           anything else arrives as a check we mark paid. */
-        payment_settings: {
-          payment_method_types: cardPaymentAllowed
-            ? ["card", "us_bank_account"]
-            : ["us_bank_account"],
-        },
-        metadata: { quoteId: quote.id, companyId: quote.company.id },
-      });
-      stripeSubscriptionId = subscription.id;
+      /* No Stripe Subscription: the app raises every invoice on its own
+         schedule now (src/lib/billing.ts). Creating one here as well would mean
+         Stripe invoicing the customer in parallel the moment keys were added —
+         double billing. Stripe keeps only the customer record, which a
+         card-payment invoice needs later. */
       billingNote =
-        "Billing: Stripe subscription created — first invoice (incl. one-time charges) will be emailed by Stripe.";
+        "Billing: invoices are raised by the app; Stripe customer kept for card payments.";
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown Stripe error";
       return { ok: false, error: `Stripe error: ${msg}` };
@@ -266,18 +200,31 @@ export async function convertQuoteToSubscription(input: {
   }
 
   // ---- Local records ----
-  /* Activation is what billing anchors to — the customer owes from the day the
-     rental goes live, not from whenever the quote happened to close. */
-  const activationDate = startDate ? new Date(startDate) : new Date();
+  /* Activation (billing start) is independent of delivery. Units are only
+     ASSIGNED here — they're still in the yard until a driver completes the
+     delivery job, which may happen weeks before or after billing starts.
+
+     The activation date is optional:
+       - today or earlier → active now, first invoice goes out today
+       - a future date   → PENDING; the billing run activates it that morning
+       - none            → PENDING until someone clicks Activate
+     Commission attribution and everything else is the same either way. */
+  // A bare yyyy-MM-dd parses as UTC midnight — the previous evening in the
+  // US, which would put the billing anchor a day early.
+  const activationDate = startDate ? new Date(`${startDate}T09:00:00`) : null;
+  if (activationDate && Number.isNaN(activationDate.getTime())) {
+    return { ok: false, error: "Invalid billing start date" };
+  }
+  const activateNow = activationDate !== null && isDueBy(activationDate);
 
   const subscription = await prisma.subscription.create({
     data: {
-      status: "ACTIVE",
-      startDate: activationDate,
+      status: "PENDING",
+      // Placeholder until activation sets the real start; startDate is required.
+      startDate: activationDate ?? new Date(),
       billingCycle,
       cycleAmount,
       mrr,
-      stripeSubscriptionId,
       companyId: quote.companyId,
       projectId: quote.projectId,
       quoteId: quote.id,
@@ -286,17 +233,14 @@ export async function convertQuoteToSubscription(input: {
       siteContactId: quote.contactId,
       cardPaymentAllowed,
       convenienceFeePct,
-      /* Billing is ours now. Rent is charged in advance and the first invoice
-         goes out the day the subscription activates, so the anchor and the first
-         due date are both the activation date. lastInvoicedThrough stays null
-         until the first invoice, which is what marks it as the first — that's
-         when delivery and setup ride along. */
+      // A scheduled activation is a PENDING subscription with these set.
       billingAnchor: activationDate,
       nextInvoiceDate: activationDate,
       // Commission attribution: the lead owner won this; fall back to
       // whoever converted the quote.
       salespersonId: quote.lead?.ownerId ?? session.user.id,
       deployments: {
+        // deliveredAt stays null: on the contract, not yet on site.
         create: trailerIds.map((trailerId) => ({ trailerId })),
       },
     },
@@ -307,32 +251,7 @@ export async function convertQuoteToSubscription(input: {
     ops.push(
       prisma.trailer.updateMany({
         where: { id: { in: trailerIds } },
-        data: { status: "DEPLOYED" },
-      })
-    );
-  }
-  if (quote.projectId) {
-    /* Projects created from a lead carry no dates, and dispatch's
-       pickups-to-schedule queue only sees ACTIVE jobs with an expectedEnd — so
-       without this the job would go live and never surface for pickup. The
-       lead's estimated rental length is the best available forecast; ops can
-       correct it from the subscription's Site & schedule card. */
-    const startDate = new Date();
-    const months = quote.lead?.estMonths ?? null;
-    const derivedEnd =
-      !quote.project?.expectedEnd && months
-        ? new Date(
-            new Date(startDate).setMonth(startDate.getMonth() + months)
-          )
-        : null;
-    ops.push(
-      prisma.project.update({
-        where: { id: quote.projectId },
-        data: {
-          status: "ACTIVE",
-          ...(quote.project?.expectedStart ? {} : { expectedStart: startDate }),
-          ...(derivedEnd ? { expectedEnd: derivedEnd } : {}),
-        },
+        data: { status: "ASSIGNED" },
       })
     );
   }
@@ -350,9 +269,15 @@ export async function convertQuoteToSubscription(input: {
     prisma.message.create({
       data: {
         channel: "SYSTEM",
-        body: `Subscription started from quote ${quote.number}. Units: ${
+        body: `Subscription created from quote ${quote.number}. Units assigned: ${
           trailers.map((t) => t.unitNumber).join(", ") || "none yet"
-        }. ${billingNote}`,
+        } — schedule a delivery to put them on site. ${
+          activateNow
+            ? "Billing activates today."
+            : activationDate
+              ? `Billing scheduled to activate ${activationDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}.`
+              : "Billing pending — activate when the job starts."
+        } ${billingNote}`,
         authorId: session.user.id,
         subscriptionId: subscription.id,
       },
@@ -360,8 +285,22 @@ export async function convertQuoteToSubscription(input: {
   );
   await prisma.$transaction(ops);
 
+  /* Activating today means the first invoice goes out today, matching the rule
+     that the first bill goes on the activation date. Failure-isolated: if the
+     invoice can't be raised now the billing run picks it up, so a hiccup here
+     must not fail a conversion that has already been recorded. */
+  if (activateNow && activationDate) {
+    await activateSubscription(subscription.id, activationDate, session.user.id);
+    try {
+      await raiseUntilCaughtUp(subscription.id);
+    } catch (err) {
+      console.error("[convert] first invoice deferred to billing run:", err);
+    }
+  }
+
   revalidatePath("/subscriptions");
   revalidatePath("/fleet");
+  revalidatePath("/dispatch");
   revalidatePath("/leads");
   revalidatePath(`/quotes/${quote.id}`);
   return { ok: true, id: subscription.id };
@@ -369,6 +308,11 @@ export async function convertQuoteToSubscription(input: {
 
 // End a subscription with a required reason. PROJECT_COMPLETED is natural
 // roll-off; the rest count as churn in KPIs.
+//
+// Ending BILLING is not the same as the units coming home. Units a driver has
+// delivered stay on site — and DEPLOYED — until a pickup job brings them back,
+// which puts them at the top of Dispatch's pickup queue. Units that were only
+// assigned never left the yard, so they're released straight back to available.
 export async function endSubscription(
   id: string,
   endReason: SubscriptionEndReason,
@@ -388,42 +332,24 @@ export async function endSubscription(
     return { ok: false, error: "Already ended" };
   }
 
-  // Cancel in Stripe first so we never bill after ending locally.
-  if (subscription.stripeSubscriptionId) {
-    const stripe = getStripe();
-    if (stripe) {
-      try {
-        await stripe.subscriptions.cancel(subscription.stripeSubscriptionId, {
-          invoice_now: true,
-          prorate: true,
-        });
-      } catch (err) {
-        const msg =
-          err instanceof Error ? err.message : "Unknown Stripe error";
-        // Already-canceled in Stripe shouldn't block local cleanup.
-        if (!msg.includes("canceled")) {
-          return { ok: false, error: `Stripe error: ${msg}` };
-        }
-      }
-    }
-  }
-
   const now = new Date();
+  const neverDelivered = subscription.deployments.filter((d) => !d.deliveredAt);
+  const stillOnSite = subscription.deployments.filter((d) => d.deliveredAt);
+
   const ops: Prisma.PrismaPromise<unknown>[] = [
     prisma.subscription.update({
       where: { id },
       data: { status: "ENDED", endedAt: now, endReason, endNotes },
     }),
-    prisma.trailerDeployment.updateMany({
-      where: { subscriptionId: id, returnedAt: null },
-      data: { returnedAt: now },
-    }),
   ];
-  const trailerIds = subscription.deployments.map((d) => d.trailerId);
-  if (trailerIds.length > 0) {
+  if (neverDelivered.length > 0) {
     ops.push(
+      prisma.trailerDeployment.updateMany({
+        where: { id: { in: neverDelivered.map((d) => d.id) } },
+        data: { returnedAt: now },
+      }),
       prisma.trailer.updateMany({
-        where: { id: { in: trailerIds } },
+        where: { id: { in: neverDelivered.map((d) => d.trailerId) } },
         data: { status: "AVAILABLE" },
       })
     );
@@ -436,19 +362,25 @@ export async function endSubscription(
       })
     );
   }
+  const units = (ds: typeof stillOnSite) =>
+    ds.map((d) => d.trailer.unitNumber).join(", ");
   ops.push(
     prisma.message.create({
       data: {
         channel: "SYSTEM",
-        body: `Subscription ended — ${endReason.replace(/_/g, " ")}${
-          endNotes ? `: ${endNotes}` : ""
-        }. ${
-          trailerIds.length
-            ? `Returned units: ${subscription.deployments
-                .map((d) => d.trailer.unitNumber)
-                .join(", ")}.`
-            : ""
-        }`,
+        body: [
+          `Billing ended — ${endReason.replace(/_/g, " ")}${
+            endNotes ? `: ${endNotes}` : ""
+          }.`,
+          neverDelivered.length
+            ? `Released (never delivered): ${units(neverDelivered)}.`
+            : "",
+          stillOnSite.length
+            ? `Still on site, awaiting pickup: ${units(stillOnSite)}.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
         authorId: session.user.id,
         subscriptionId: id,
       },
@@ -459,6 +391,7 @@ export async function endSubscription(
   revalidatePath("/subscriptions");
   revalidatePath(`/subscriptions/${id}`);
   revalidatePath("/fleet");
+  revalidatePath("/dispatch");
   return { ok: true };
 }
 
@@ -496,43 +429,13 @@ export async function deployTrailers(
   }
 
   const increase = billing ? billing.unitRate * trailerIds.length : 0;
-  let billingNote = "";
 
-  // Push the increase to Stripe first (prorated from today).
-  if (increase > 0 && subscription.stripeSubscriptionId) {
-    const stripe = getStripe();
-    if (stripe && subscription.billingCycle !== "ONE_TIME") {
-      try {
-        const product = await stripe.products.create({
-          name: `Additional trailer rental (x${trailerIds.length})`,
-        });
-        await stripe.subscriptionItems.create({
-          subscription: subscription.stripeSubscriptionId,
-          quantity: trailerIds.length,
-          price_data: {
-            currency: "usd",
-            unit_amount: toCents(billing!.unitRate),
-            recurring:
-              STRIPE_INTERVALS[
-                subscription.billingCycle as Exclude<
-                  typeof subscription.billingCycle,
-                  "ONE_TIME"
-                >
-              ],
-            product: product.id,
-          },
-          proration_behavior: "create_prorations",
-        });
-        billingNote = " Stripe subscription item added with proration.";
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown Stripe error";
-        return { ok: false, error: `Stripe error: ${msg}` };
-      }
-    }
-  }
-
+  /* The increase lands in cycleAmount, which the billing run reconciles against
+     the quote lines on the next invoice as an explicit adjustment line. No
+     Stripe call: the app owns the schedule. */
   const newCycleAmount = Number(subscription.cycleAmount) + increase;
   const ops: Prisma.PrismaPromise<unknown>[] = [
+    // Assigned to the job, still in the yard — a delivery job puts them on site.
     ...trailerIds.map((trailerId) =>
       prisma.trailerDeployment.create({
         data: { trailerId, subscriptionId },
@@ -540,7 +443,7 @@ export async function deployTrailers(
     ),
     prisma.trailer.updateMany({
       where: { id: { in: trailerIds } },
-      data: { status: "DEPLOYED" },
+      data: { status: "ASSIGNED" },
     }),
   ];
   if (increase > 0) {
@@ -561,11 +464,11 @@ export async function deployTrailers(
     prisma.message.create({
       data: {
         channel: "SYSTEM",
-        body: `Deployed additional units: ${trailers
+        body: `Assigned additional units: ${trailers
           .map((t) => t.unitNumber)
-          .join(", ")}.${
+          .join(", ")} — schedule a delivery to put them on site.${
           increase > 0
-            ? ` Billing increased by ${trailerIds.length} x $${billing!.unitRate.toFixed(2)} to $${newCycleAmount.toFixed(2)} per cycle.${billingNote}`
+            ? ` Billing increased by ${trailerIds.length} x $${billing!.unitRate.toFixed(2)} to $${newCycleAmount.toFixed(2)} per cycle from the next invoice.`
             : " Billing unchanged."
         }`,
         authorId: session.user.id,
@@ -577,6 +480,87 @@ export async function deployTrailers(
 
   revalidatePath(`/subscriptions/${subscriptionId}`);
   revalidatePath("/fleet");
+  revalidatePath("/dispatch");
+  return { ok: true };
+}
+
+/* Start billing now (or on a backdated day). A future date schedules instead:
+   the billing run activates it that morning. Raising the first invoice right
+   away keeps the "first bill on activation day" rule true for a manual click,
+   not just for the overnight run. */
+export async function activateSubscriptionAction(
+  subscriptionId: string,
+  dateInput?: string
+): Promise<ActionResult> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: "Not authenticated" };
+
+  const date = dateInput ? new Date(`${dateInput}T09:00:00`) : new Date();
+  if (Number.isNaN(date.getTime())) return { ok: false, error: "Invalid date" };
+
+  if (!isDueBy(date)) return scheduleActivation(subscriptionId, dateInput!);
+
+  const result = await activateSubscription(subscriptionId, date, session.user.id);
+  if (!result.ok) return { ok: false, error: result.reason };
+  try {
+    await raiseUntilCaughtUp(subscriptionId);
+  } catch (err) {
+    console.error("[activate] remaining invoices deferred to billing run:", err);
+  }
+
+  revalidatePath(`/subscriptions/${subscriptionId}`);
+  revalidatePath("/subscriptions");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+/* Set, move, or clear a future activation date on a PENDING subscription. A
+   job slipping is common, so this is how someone pushes the date before an
+   invoice goes out. */
+export async function scheduleActivation(
+  subscriptionId: string,
+  dateInput: string | null
+): Promise<ActionResult> {
+  const session = await auth();
+  if (!session?.user) return { ok: false, error: "Not authenticated" };
+
+  const sub = await prisma.subscription.findUnique({
+    where: { id: subscriptionId },
+    select: { status: true },
+  });
+  if (!sub) return { ok: false, error: "Subscription not found" };
+  if (sub.status !== "PENDING") {
+    return { ok: false, error: "Billing has already started" };
+  }
+
+  const date = dateInput ? new Date(`${dateInput}T09:00:00`) : null;
+  if (date && Number.isNaN(date.getTime())) {
+    return { ok: false, error: "Invalid date" };
+  }
+
+  await prisma.$transaction([
+    prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: { billingAnchor: date, nextInvoiceDate: date },
+    }),
+    prisma.message.create({
+      data: {
+        channel: "SYSTEM",
+        body: date
+          ? `Billing scheduled to activate ${date.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            })}.`
+          : "Scheduled activation cleared — billing waits for a manual Activate.",
+        authorId: session.user.id,
+        subscriptionId,
+      },
+    }),
+  ]);
+
+  revalidatePath(`/subscriptions/${subscriptionId}`);
+  revalidatePath("/");
   return { ok: true };
 }
 

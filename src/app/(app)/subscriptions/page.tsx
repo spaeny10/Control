@@ -30,10 +30,10 @@ export default async function SubscriptionsPage({
 }) {
   const { status, q } = await searchParams;
   const search = q?.trim();
-  const validStatus = ["ACTIVE", "PAST_DUE", "PAUSED", "ENDED"].includes(
+  const validStatus = ["PENDING", "ACTIVE", "PAST_DUE", "PAUSED", "ENDED"].includes(
     status ?? ""
   )
-    ? (status as "ACTIVE" | "PAST_DUE" | "PAUSED" | "ENDED")
+    ? (status as "PENDING" | "ACTIVE" | "PAST_DUE" | "PAUSED" | "ENDED")
     : undefined;
 
   const subscriptions = await prisma.subscription.findMany({
@@ -90,6 +90,7 @@ export default async function SubscriptionsPage({
           current={validStatus}
           keepParams={{ q: search }}
           options={[
+            { value: "PENDING", label: "Not billing yet" },
             { value: "ACTIVE", label: "Active" },
             { value: "PAST_DUE", label: "Past due" },
             { value: "PAUSED", label: "Paused" },
@@ -109,9 +110,9 @@ export default async function SubscriptionsPage({
               <TableRow>
                 <TableHead>Company</TableHead>
                 <TableHead>Project</TableHead>
-                <TableHead>Units on site</TableHead>
+                <TableHead>Units</TableHead>
                 <TableHead className="text-right">Billing</TableHead>
-                <TableHead>Started</TableHead>
+                <TableHead>Billing since</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -147,7 +148,12 @@ export default async function SubscriptionsPage({
                   <TableCell className="text-muted-foreground">
                     {s.deployments.length > 0
                       ? s.deployments
-                          .map((d) => d.trailer.unitNumber)
+                          // Assigned but still in the yard reads differently.
+                          .map((d) =>
+                            d.deliveredAt
+                              ? d.trailer.unitNumber
+                              : d.trailer.unitNumber + " (in yard)"
+                          )
                           .join(", ")
                       : "—"}
                   </TableCell>
@@ -161,7 +167,7 @@ export default async function SubscriptionsPage({
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDate(s.startDate)}
+                    {s.activatedAt ? formatDate(s.activatedAt) : "not started"}
                   </TableCell>
                   <TableCell>
                     <Badge variant={statusBadgeVariant(s.status)}>

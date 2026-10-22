@@ -176,37 +176,84 @@ export async function getSalesKpis(months: number = 6, repId?: string) {
 
 // ---------------------------------------------------------------- Fleet ----
 
+/* Two utilizations, because a unit on site isn't necessarily earning: units
+   are often dropped before billing starts, and stay out after it ends until
+   the pickup. Physical is what the yard sees; earning is what the business
+   gets paid for. The gap between them is staged units plus overdue pickups. */
 export async function getFleetKpis() {
-  const [trailers, inMaintenance] = await Promise.all([
-    prisma.trailer.groupBy({ by: ["status"], _count: true }),
-    prisma.trailer.findMany({
-      where: { status: "MAINTENANCE" },
-      select: {
-        id: true,
-        unitNumber: true,
-        maintenanceLogs: {
-          orderBy: { date: "desc" },
-          take: 1,
-          select: { description: true, date: true },
+  const onSite = { returnedAt: null, deliveredAt: { not: null } };
+  const [trailers, inMaintenance, inInspection, earning, staged] =
+    await Promise.all([
+      prisma.trailer.groupBy({ by: ["status"], _count: true }),
+      prisma.trailer.findMany({
+        where: { status: "MAINTENANCE" },
+        select: {
+          id: true,
+          unitNumber: true,
+          maintenanceLogs: {
+            orderBy: { date: "desc" },
+            take: 1,
+            select: { description: true, date: true },
+          },
         },
-      },
-      orderBy: { unitNumber: "asc" },
-    }),
-  ]);
+        orderBy: { unitNumber: "asc" },
+      }),
+      prisma.trailer.findMany({
+        where: { status: "INSPECTION" },
+        select: {
+          id: true,
+          unitNumber: true,
+          deployments: {
+            where: { returnedAt: { not: null } },
+            orderBy: { returnedAt: "desc" },
+            take: 1,
+            select: {
+              returnedAt: true,
+              subscription: { select: { company: { select: { name: true } } } },
+            },
+          },
+        },
+      }),
+      prisma.trailerDeployment.count({
+        where: { ...onSite, subscription: { status: { in: ["ACTIVE", "PAST_DUE"] } } },
+      }),
+      prisma.trailerDeployment.count({
+        where: { ...onSite, subscription: { status: "PENDING" } },
+      }),
+    ]);
 
   const count = (status: string) =>
     trailers.find((t) => t.status === status)?._count ?? 0;
   const deployed = count("DEPLOYED");
+  const assigned = count("ASSIGNED");
   const available = count("AVAILABLE");
+  const inspection = count("INSPECTION");
   const maintenance = count("MAINTENANCE");
-  const nonRetired = deployed + available + maintenance;
+  const nonRetired = deployed + assigned + available + inspection + maintenance;
+  const pct = (n: number) =>
+    nonRetired > 0 ? Math.round((n / nonRetired) * 100) : 0;
 
   return {
-    utilization:
-      nonRetired > 0 ? Math.round((deployed / nonRetired) * 100) : 0,
+    utilization: pct(deployed),
+    earningUtilization: pct(earning),
+    fleetSize: nonRetired,
     deployed,
+    earning,
+    staged,
+    assigned,
     available,
+    inspection,
     maintenance,
+    inInspection: inInspection
+      .map((t) => ({
+        id: t.id,
+        unitNumber: t.unitNumber,
+        returnedAt: t.deployments[0]?.returnedAt ?? null,
+        from: t.deployments[0]?.subscription.company.name ?? null,
+      }))
+      .sort(
+        (a, b) => (a.returnedAt?.getTime() ?? 0) - (b.returnedAt?.getTime() ?? 0)
+      ),
     inMaintenance: inMaintenance.map((t) => ({
       id: t.id,
       unitNumber: t.unitNumber,
@@ -236,7 +283,8 @@ export async function getAccountingKpis(months: number = 6) {
       select: { mrr: true, startDate: true },
     }),
     prisma.subscription.findMany({
-      where: { status: "ENDED" },
+      // A contract cancelled before activation never billed — not churn.
+      where: { status: "ENDED", activatedAt: { not: null } },
       select: { mrr: true, startDate: true, endedAt: true, endReason: true },
     }),
     prisma.subscription.count({ where: { status: "PAST_DUE" } }),

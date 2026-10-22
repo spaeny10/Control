@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useTransition } from "react";
 import { setJobStatus, deleteJob } from "@/lib/actions/dispatch-actions";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ export type DispatchJobView = {
   driverName: string | null;
   companyName: string | null;
   notes: string | null;
+  units: number;
 };
 
 export function JobCard({ job }: { job: DispatchJobView }) {
@@ -53,10 +55,15 @@ export function JobCard({ job }: { job: DispatchJobView }) {
       )}
     >
       <div className="flex items-start justify-between gap-1">
-        <div className="flex items-center gap-1.5 font-medium">
+        {/* The job page is where a driver works the job: units, site contact,
+            condition photos, and completing a partial run. */}
+        <Link
+          href={`/dispatch/${job.id}`}
+          className="flex items-center gap-1.5 font-medium hover:underline"
+        >
           <Icon className="h-3.5 w-3.5 shrink-0" />
           {job.time} · {job.type.charAt(0) + job.type.slice(1).toLowerCase()}
-        </div>
+        </Link>
         <DropdownMenu>
           <DropdownMenuTrigger className="rounded p-0.5 hover:bg-muted">
             <MoreVertical className="h-3.5 w-3.5" />
@@ -66,7 +73,7 @@ export function JobCard({ job }: { job: DispatchJobView }) {
               Mark in progress
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => update("DONE")}>
-              Mark done
+              {job.units > 0 ? `Mark done (all ${job.units} units)` : "Mark done"}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => update("CANCELED")}>
               Cancel job
@@ -93,6 +100,11 @@ export function JobCard({ job }: { job: DispatchJobView }) {
         <Badge variant="outline" className="px-1 text-[10px]">
           {job.driverName ?? "Unassigned"}
         </Badge>
+        {job.units > 0 && (
+          <Badge variant="outline" className="px-1 text-[10px]">
+            {job.units} unit{job.units === 1 ? "" : "s"}
+          </Badge>
+        )}
         {job.status !== "SCHEDULED" && (
           <Badge
             variant={job.status === "CANCELED" ? "destructive" : "secondary"}

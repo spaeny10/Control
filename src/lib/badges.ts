@@ -15,7 +15,9 @@ const map: Record<string, BadgeVariant> = {
   COMPLETED: "outline",
   // Trailer status
   AVAILABLE: "default",
+  ASSIGNED: "outline",
   DEPLOYED: "secondary",
+  INSPECTION: "outline",
   MAINTENANCE: "destructive",
   RETIRED: "outline",
   // Quote status
@@ -34,6 +36,16 @@ const map: Record<string, BadgeVariant> = {
   PAID: "default",
   VOID: "outline",
   UNCOLLECTIBLE: "destructive",
+};
+
+// The physical state in words a yard hand uses.
+export const TRAILER_STATUS_LABEL: Record<string, string> = {
+  AVAILABLE: "Available",
+  ASSIGNED: "Assigned",
+  DEPLOYED: "On site",
+  INSPECTION: "Inspection",
+  MAINTENANCE: "Maintenance",
+  RETIRED: "Retired",
 };
 
 export function statusBadgeVariant(status: string): BadgeVariant {

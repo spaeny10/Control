@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { toast } from "sonner";
+import { format } from "date-fns";
 
 export function ConvertQuoteForm({
   quoteId,
@@ -27,9 +28,10 @@ export function ConvertQuoteForm({
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<string[]>([]);
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
+  // Local date — toISOString() would roll to tomorrow on a US evening.
+  const today = format(new Date(), "yyyy-MM-dd");
+  const [startDate, setStartDate] = useState(today);
+  const [startUnknown, setStartUnknown] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   function toggle(id: string) {
@@ -43,10 +45,14 @@ export function ConvertQuoteForm({
       const result = await convertQuoteToSubscription({
         quoteId,
         trailerIds: selected,
-        startDate,
+        startDate: startUnknown ? undefined : startDate,
       });
       if (result.ok) {
-        toast.success("Subscription started");
+        toast.success(
+          startUnknown || startDate > today
+            ? "Subscription created — billing not started yet"
+            : "Subscription created — billing active, first invoice raised"
+        );
         router.push(`/subscriptions/${result.id}`);
       } else {
         toast.error(result.error ?? "Conversion failed");
@@ -86,14 +92,34 @@ export function ConvertQuoteForm({
           ))}
         </div>
 
-        <div className="max-w-xs space-y-2">
-          <Label htmlFor="startDate">Start date</Label>
+        {/* Billing start is independent of delivery: the selected units are
+            only assigned here, and a dispatch job puts them on site — before
+            or after billing starts. */}
+        <div className="max-w-md space-y-2">
+          <Label htmlFor="startDate">Billing starts</Label>
           <Input
             id="startDate"
             type="date"
             value={startDate}
+            disabled={startUnknown}
             onChange={(e) => setStartDate(e.target.value)}
+            className="max-w-xs"
           />
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={startUnknown}
+              onCheckedChange={(v) => setStartUnknown(v === true)}
+            />
+            Not known yet — activate it later from the subscription
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {startUnknown
+              ? "Nothing bills until someone activates it. Units can still be delivered."
+              : startDate > today
+                ? "Billing activates that morning and the first invoice goes out the same day."
+                : "Billing activates now and the first invoice is raised today, covering the period from this date."}{" "}
+            Selected units are assigned, not delivered — schedule the delivery in Dispatch.
+          </p>
         </div>
 
         <div className="flex justify-end gap-2">

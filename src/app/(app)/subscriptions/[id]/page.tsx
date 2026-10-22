@@ -23,6 +23,8 @@ import { formatCurrency, formatDate, fullName } from "@/lib/format";
 import { CYCLE_SUFFIX } from "@/lib/cycles";
 import { statusBadgeVariant } from "@/lib/badges";
 import { ExternalLink } from "lucide-react";
+import { format } from "date-fns";
+import { ActivationCard } from "@/components/subscriptions/activation-card";
 
 export const metadata = { title: "Subscription" };
 
@@ -97,6 +99,12 @@ export default async function SubscriptionDetailPage({
     (d) => !d.returnedAt
   );
   const isLive = subscription.status !== "ENDED";
+  const isPending = subscription.status === "PENDING";
+  const onSite = activeDeployments.filter((d) => d.deliveredAt);
+  const inYard = activeDeployments.filter((d) => !d.deliveredAt);
+  const firstOnSite = onSite
+    .map((d) => d.deliveredAt!)
+    .sort((a, b) => a.getTime() - b.getTime())[0];
   const p = subscription.project;
   const siteAddress =
     [
@@ -148,8 +156,9 @@ export default async function SubscriptionDetailPage({
             {CYCLE_SUFFIX[subscription.billingCycle]}
             {subscription.billingCycle !== "MONTHLY" &&
               ` (≈ ${formatCurrency(Number(subscription.mrr))}/mo)`}
-            {" · started "}
-            {formatDate(subscription.startDate)}
+            {subscription.activatedAt
+              ? ` · billing since ${formatDate(subscription.activatedAt)}`
+              : " · billing not started"}
             {subscription.quote && (
               <>
                 {" · from "}
@@ -185,11 +194,33 @@ export default async function SubscriptionDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
+          {isPending && (
+            <ActivationCard
+              subscriptionId={subscription.id}
+              scheduledFor={
+                subscription.nextInvoiceDate
+                  ? format(subscription.nextInvoiceDate, "yyyy-MM-dd")
+                  : null
+              }
+              unitsOnSite={onSite.length}
+              unitsInYard={inYard.length}
+              firstOnSite={firstOnSite ? formatDate(firstOnSite) : null}
+            />
+          )}
+
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">
-                Trailers on site ({activeDeployments.length})
-              </CardTitle>
+              <div>
+                <CardTitle className="text-base">
+                  Trailers ({activeDeployments.length})
+                </CardTitle>
+                <CardDescription>
+                  {onSite.length} on site
+                  {inYard.length > 0 &&
+                    ` · ${inYard.length} assigned, awaiting delivery`}
+                  {" — "}moved by completing a dispatch job
+                </CardDescription>
+              </div>
               {isLive && (
                 <DeployTrailersDialog
                   subscriptionId={subscription.id}
@@ -217,22 +248,33 @@ export default async function SubscriptionDetailPage({
                             {d.trailer.unitNumber}
                           </Link>
                           <p className="text-xs text-muted-foreground">
-                            {formatDate(d.deployedAt)} →{" "}
-                            {d.returnedAt
-                              ? formatDate(d.returnedAt)
-                              : "on site"}
+                            {d.deliveredAt
+                              ? `on site ${formatDate(d.deliveredAt)} → ${
+                                  d.returnedAt ? formatDate(d.returnedAt) : "present"
+                                }`
+                              : d.returnedAt
+                                ? `assigned ${formatDate(d.deployedAt)}, released before delivery`
+                                : `assigned ${formatDate(d.deployedAt)} · awaiting delivery`}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <DeploymentDocsDialog
-                            deploymentId={d.id}
-                            unitNumber={d.trailer.unitNumber}
-                            defaultPhase={d.returnedAt ? "RETURN" : "DELIVERY"}
-                          />
-                          {!d.returnedAt && isLive && (
+                          {!d.returnedAt && !d.deliveredAt && (
+                            <Badge variant="outline">In yard</Badge>
+                          )}
+                          {(d.deliveredAt || d.returnedAt) && (
+                            <DeploymentDocsDialog
+                              deploymentId={d.id}
+                              unitNumber={d.trailer.unitNumber}
+                              defaultPhase={d.returnedAt ? "RETURN" : "DELIVERY"}
+                            />
+                          )}
+                          {/* Billing ended but units still out: they leave by
+                              pickup, so the manual return stays available. */}
+                          {!d.returnedAt && (
                             <ReturnTrailerButton
                               deploymentId={d.id}
                               unitNumber={d.trailer.unitNumber}
+                              delivered={!!d.deliveredAt}
                             />
                           )}
                         </div>
@@ -255,9 +297,9 @@ export default async function SubscriptionDetailPage({
             <CardContent>
               {subscription.invoices.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No invoices synced yet.
-                  {!subscription.stripeSubscriptionId &&
-                    " This subscription isn't connected to Stripe."}
+                  {isPending
+                    ? "No invoices yet — the first is raised the day billing activates."
+                    : "No invoices yet."}
                 </p>
               ) : (
                 <div className="divide-y">

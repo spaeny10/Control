@@ -9,6 +9,7 @@ import type { BillingCycle } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { withInvoiceNumber } from "@/lib/invoice-number";
 import { calculateTax, commitOrder, isTaxCloudConfigured } from "@/lib/taxcloud";
+import { activateSubscription } from "@/lib/activation";
 
 /* The billing engine. We own the schedule; Stripe is only a card rail.
 
@@ -66,6 +67,8 @@ export type DueInvoice = {
   periodEnd: Date;
   cycleAmount: number;
   daysLate: number;
+  /** A scheduled activation: the run starts billing, then raises the first invoice. */
+  activates: boolean;
 };
 
 /* What the next run owes. Also drives the Accounting dashboard card, because a
@@ -75,7 +78,9 @@ export async function getDueInvoiceQueue(asOf = new Date()): Promise<DueInvoice[
   const today = startOfDay(asOf);
   const due = await prisma.subscription.findMany({
     where: {
-      status: { in: ["ACTIVE", "PAST_DUE"] },
+      /* PENDING with a date set is a scheduled activation. PENDING without one
+         waits for a person, and nextInvoiceDate: not null already excludes it. */
+      status: { in: ["ACTIVE", "PAST_DUE", "PENDING"] },
       /* Compared against the END of today, not the start. nextInvoiceDate
          carries a time — a subscription activated at 2pm has a 2pm anchor — and
          `lte: startOfDay` would exclude it until tomorrow. That would miss the
@@ -86,6 +91,7 @@ export async function getDueInvoiceQueue(asOf = new Date()): Promise<DueInvoice[
     },
     select: {
       id: true,
+      status: true,
       cycleAmount: true,
       billingCycle: true,
       billingAnchor: true,
@@ -104,6 +110,7 @@ export async function getDueInvoiceQueue(asOf = new Date()): Promise<DueInvoice[
       periodStart,
       periodEnd: periodEndFor(periodStart, s.billingCycle, s.billingAnchor),
       cycleAmount: Number(s.cycleAmount),
+      activates: s.status === "PENDING",
       daysLate: Math.max(
         0,
         Math.floor(
@@ -388,6 +395,20 @@ export async function raiseInvoiceFor(
   return { ok: true, invoiceId: created.id, number: created.number, total };
 }
 
+/* Raise every period owed up to today, for a subscription that has just
+   activated. A backdated start owes all the periods since, not just the first.
+   The high-water mark stops it at today; the cap stops a typo'd year from
+   spraying invoices, and the scheduled run picks up anything beyond it. */
+export async function raiseUntilCaughtUp(subscriptionId: string, cap = 24) {
+  let raised = 0;
+  for (let i = 0; i < cap; i++) {
+    const r = await raiseInvoiceFor(subscriptionId);
+    if (!r.ok) break;
+    raised++;
+  }
+  return raised;
+}
+
 /** Raise everything due. Returns a per-subscription outcome for the run log. */
 export async function runBilling(asOf = new Date()) {
   const queue = await getDueInvoiceQueue(asOf);
@@ -398,6 +419,19 @@ export async function runBilling(asOf = new Date()) {
   }[] = [];
   for (const item of queue) {
     try {
+      if (item.activates) {
+        /* Activate on the scheduled day, not the run's day: a run that's a day
+           late must not shift the anchor, or every later bill moves with it. */
+        const a = await activateSubscription(item.subscriptionId, item.periodStart);
+        if (!a.ok) {
+          results.push({
+            subscriptionId: item.subscriptionId,
+            company: item.company,
+            outcome: `not activated: ${a.reason}`,
+          });
+          continue;
+        }
+      }
       const r = await raiseInvoiceFor(item.subscriptionId, asOf);
       results.push({
         subscriptionId: item.subscriptionId,

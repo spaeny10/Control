@@ -43,17 +43,25 @@ export async function FleetDashboard() {
   ]);
 
   const tiles: StatTile[] = [
+    /* On site vs earning: the gap is units dropped before billing starts plus
+       units still out after it ended. */
     {
-      label: "Trailer utilization",
+      label: "On site",
       value: `${kpis.utilization}%`,
-      sub: `${kpis.deployed} deployed / ${kpis.deployed + kpis.available + kpis.maintenance} active fleet`,
+      sub: `${kpis.deployed} of ${kpis.fleetSize} units · ${kpis.earningUtilization}% earning`,
       icon: Truck,
       tint: "bg-[#2a78d6]/10 text-[#2a78d6]",
     },
     {
       label: "Available units",
       value: String(kpis.available),
-      sub: "ready to deploy",
+      sub: [
+        "ready to deploy",
+        kpis.assigned > 0 && `${kpis.assigned} assigned, in yard`,
+        kpis.inspection > 0 && `${kpis.inspection} to inspect`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
       icon: Warehouse,
       tint: "bg-[#eb6834]/10 text-[#eb6834]",
     },
@@ -117,7 +125,7 @@ export async function FleetDashboard() {
                     Deliveries to schedule ({deliveries.length})
                   </CardTitle>
                   <CardDescription>
-                    Customers waiting on equipment with no truck booked.
+                    Units assigned to a job, still in the yard, no truck booked.
                   </CardDescription>
                 </div>
                 <Button asChild size="sm" variant="outline">
@@ -134,11 +142,15 @@ export async function FleetDashboard() {
                         d.jobName ?? "No job linked",
                         d.siteCity &&
                           `${d.siteCity}${d.siteState ? `, ${d.siteState}` : ""}`,
-                        d.units > 0 ? `${d.units} unit${d.units === 1 ? "" : "s"}` : "no units assigned",
+                        `${d.units} unit${d.units === 1 ? "" : "s"}`,
                       ]
                         .filter(Boolean)
                         .join(" · "),
-                      `starts ${formatDate(d.startDate)}`
+                      d.billingStatus !== "PENDING"
+                        ? "billing — not delivered"
+                        : d.activationDate
+                          ? `billing starts ${formatDate(d.activationDate)}`
+                          : "billing not scheduled"
                     )
                   )}
                 </div>
@@ -154,8 +166,8 @@ export async function FleetDashboard() {
                     Pickups to schedule ({pickups.length})
                   </CardTitle>
                   <CardDescription>
-                    Jobs winding down within 30 days, no pickup booked. End
-                    dates are estimates — call before committing a truck.
+                    Units on site with no pickup booked — billing ended, or the
+                    job is due to wind down (an estimate; call first).
                   </CardDescription>
                 </div>
                 <Button asChild size="sm" variant="outline">
@@ -166,16 +178,19 @@ export async function FleetDashboard() {
                 <div className="divide-y">
                   {pickups.slice(0, 8).map((p) =>
                     queueRow(
-                      p.projectId,
+                      p.subscriptionId,
                       p.company,
                       [
-                        p.jobName,
+                        p.jobName ?? "No job linked",
                         p.siteCity &&
                           `${p.siteCity}${p.siteState ? `, ${p.siteState}` : ""}`,
+                        `${p.units} unit${p.units === 1 ? "" : "s"}`,
                       ]
                         .filter(Boolean)
                         .join(" · "),
-                      `est. end ${formatDate(p.expectedEnd)}`
+                      p.reason === "billing-ended"
+                        ? `billing ended ${formatDate(p.date)}`
+                        : `est. end ${formatDate(p.date)}`
                     )
                   )}
                 </div>
@@ -253,6 +268,50 @@ export async function FleetDashboard() {
           </CardContent>
         </Card>
 
+        <div className="space-y-6">
+        {/* Back from a site and not yet signed off. Can't go out again until
+            someone looks it over — set it Available or Maintenance on the unit. */}
+        {kpis.inInspection.length > 0 && (
+          <Card className="border-[#eb6834]/50">
+            <CardHeader>
+              <CardTitle className="text-base">
+                Awaiting inspection ({kpis.inInspection.length})
+              </CardTitle>
+              <CardDescription>
+                Returned from site. Check each one, then mark it Available or
+                send it to Maintenance.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="divide-y">
+                {kpis.inInspection.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <Link
+                        href={`/fleet/${t.id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {t.unitNumber}
+                      </Link>
+                      {t.from && (
+                        <p className="truncate text-xs text-muted-foreground">
+                          from {t.from}
+                        </p>
+                      )}
+                    </div>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      back {formatDate(t.returnedAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -295,6 +354,7 @@ export async function FleetDashboard() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

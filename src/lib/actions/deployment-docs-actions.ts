@@ -144,5 +144,7 @@ export async function saveDeploymentDocs(
 
   revalidatePath(`/subscriptions/${deployment.subscriptionId}`);
   revalidatePath(`/fleet/${deployment.trailerId}`);
+  // Drivers capture photos and signatures from the job page.
+  revalidatePath("/dispatch", "layout");
   return { ok: true };
 }

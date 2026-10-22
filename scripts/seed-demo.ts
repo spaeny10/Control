@@ -263,6 +263,7 @@ async function main() {
       subData.push({
         status: "ENDED",
         startDate: p.expectedStart!,
+        activatedAt: p.expectedStart!,
         endedAt: p.expectedEnd!,
         endReason: pick([...END_REASONS]),
         billingCycle: "MONTHLY",
@@ -276,6 +277,7 @@ async function main() {
       subData.push({
         status: rand() < 0.06 ? "PAST_DUE" : "ACTIVE",
         startDate: p.expectedStart!,
+        activatedAt: p.expectedStart!,
         billingCycle: "MONTHLY",
         cycleAmount,
         mrr: cycleAmount,
@@ -308,6 +310,7 @@ async function main() {
           trailerId: pick(allTrailers).id,
           subscriptionId: sub.id,
           deployedAt: sub.startDate,
+          deliveredAt: sub.startDate,
           returnedAt: sub.endedAt!,
         });
       }
@@ -319,6 +322,7 @@ async function main() {
           trailerId,
           subscriptionId: sub.id,
           deployedAt: sub.startDate,
+          deliveredAt: sub.startDate,
         });
       }
     }

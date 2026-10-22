@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getAccountingKpis } from "@/lib/kpi";
 import { getDueInvoiceQueue } from "@/lib/billing";
+import { getStagedQueue, getReturnedStillBilling } from "@/lib/dispatch-queues";
 import { StatTiles, type StatTile } from "@/components/dashboard/stat-tiles";
 import {
   MrrTrendChart,
@@ -28,9 +29,11 @@ import {
 /* The books' morning view: what's billing, what's overdue, what's been sold
    but isn't billing yet, and what revenue is about to roll off. */
 export async function AccountingDashboard({ months }: { months: number }) {
-  const [kpis, dueToRaise] = await Promise.all([
+  const [kpis, dueToRaise, staged, returnedBilling] = await Promise.all([
     getAccountingKpis(months),
     getDueInvoiceQueue(),
+    getStagedQueue(),
+    getReturnedStillBilling(),
   ]);
   const now = new Date();
   /* We own the billing schedule, so a scheduled run that quietly stops is the
@@ -146,6 +149,9 @@ export async function AccountingDashboard({ months }: { months: number }) {
                     <span className="text-sm font-medium">
                       {formatCurrency(d.cycleAmount)}
                     </span>
+                    {d.activates && (
+                      <Badge variant="outline">activates</Badge>
+                    )}
                     {d.daysLate >= 1 && (
                       <Badge variant="destructive">{d.daysLate}d late</Badge>
                     )}
@@ -196,6 +202,98 @@ export async function AccountingDashboard({ months }: { months: number }) {
                   <span className="shrink-0 text-sm font-medium">
                     {formatCurrency(q.monthlyValue)}/mo
                   </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* The physical and billing tracks disagreeing, in both directions. */}
+      {returnedBilling.length > 0 && (
+        <Card className="border-destructive/50">
+          <CardHeader>
+            <CardTitle className="text-base">
+              Equipment back, still billing ({returnedBilling.length})
+            </CardTitle>
+            <CardDescription>
+              Every unit has been picked up but the subscription is still
+              invoicing. Usually a missed End billing — the customer will
+              dispute the next invoice.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {returnedBilling.map((r) => (
+                <div
+                  key={r.subscriptionId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/subscriptions/${r.subscriptionId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {r.company}
+                    </Link>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {r.jobName ?? "No job linked"}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    last unit back {formatDate(r.lastReturnedAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {staged.length > 0 && (
+        <Card className="border-[#eb6834]/50">
+          <CardHeader>
+            <CardTitle className="text-base">
+              On site, not billing ({staged.length})
+            </CardTitle>
+            <CardDescription>
+              Delivered ahead of activation — normal when a truck was already
+              headed that way, but it&apos;s free equipment until billing
+              starts. Activate or schedule a date on the subscription.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {staged.map((s) => (
+                <div
+                  key={s.subscriptionId}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <Link
+                      href={`/subscriptions/${s.subscriptionId}`}
+                      className="font-medium hover:underline"
+                    >
+                      {s.company}
+                    </Link>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {s.jobName ?? "No job linked"} · {s.units} unit
+                      {s.units === 1 ? "" : "s"} since {formatDate(s.deliveredAt)}
+                      {" · "}
+                      {s.scheduledActivation
+                        ? `activates ${formatDate(s.scheduledActivation)}`
+                        : "no activation date"}
+                    </p>
+                  </div>
+                  <Badge
+                    variant={
+                      s.daysStaged >= 14 && !s.scheduledActivation
+                        ? "destructive"
+                        : "secondary"
+                    }
+                  >
+                    {s.daysStaged}d staged
+                  </Badge>
                 </div>
               ))}
             </div>
